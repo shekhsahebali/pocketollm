@@ -174,15 +174,6 @@ export default function ChatScreen() {
     ]);
   };
 
-  const statusLabel = (() => {
-    if (model.status === 'loading') {
-      return model.loadProgress > 0 ? `Loading ${model.loadProgress}%` : 'Loading…';
-    }
-    if (model.status === 'loaded') return model.model?.name ?? 'Loaded';
-    if (model.status === 'error') return 'Model error';
-    return 'No model loaded';
-  })();
-
   return (
     <ThemedView style={styles.flex}>
       <KeyboardAvoidingView

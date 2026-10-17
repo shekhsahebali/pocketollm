@@ -1,4 +1,5 @@
 // Runnable logic check for the non-trivial pure rules: `node selfcheck.ts` (Node >= 22.6 strips types).
+import { MODEL_CATALOG, totalSizeBytes } from './src/models/catalog.ts';
 import { DEFAULT_SETTINGS, sanitize } from './src/settings/settingsSanitize.ts';
 import { titleFromFirstMessage } from './src/chat/titleRule.ts';
 
@@ -41,5 +42,16 @@ ok(titleFromFirstMessage('  a \n  b  ') === 'a b', 'whitespace collapsed');
 const exact = 'x'.repeat(40);
 ok(titleFromFirstMessage(exact) === exact, '40 chars kept whole');
 ok(titleFromFirstMessage('x'.repeat(41)) === `${'x'.repeat(40)}…`, 'over 40 trimmed with ellipsis');
+
+// --- catalog integrity (a bad URL/hash here would brick a download) ---
+ok(MODEL_CATALOG.length >= 12, 'catalog not empty');
+ok(new Set(MODEL_CATALOG.map((m) => m.id)).size === MODEL_CATALOG.length, 'catalog ids unique');
+for (const m of MODEL_CATALOG) {
+  ok(/^[0-9a-f]{64}$/.test(m.sha256), `sha256 well-formed: ${m.id}`);
+  ok(m.url.startsWith('https://huggingface.co/'), `download url on huggingface.co: ${m.id}`);
+  ok(m.approxSizeBytes > 0 && totalSizeBytes(m) >= m.approxSizeBytes, `size sane: ${m.id}`);
+  ok(Boolean(m.provider && m.name && m.quant), `provider/name/quant present: ${m.id}`);
+  ok(m.mmproj === undefined || /^[0-9a-f]{64}$/.test(m.mmproj.sha256), `mmproj sha: ${m.id}`);
+}
 
 console.log(`selfcheck: ${checks} checks passed`);

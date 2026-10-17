@@ -24,6 +24,8 @@ export interface Conversation {
 
 export interface ModelEntry {
   id: string;
+  /** Upstream model organisation (Qwen, Meta, Google…); shown on cards and used by search. */
+  provider: string;
   name: string;
   filename: string;
   url: string;

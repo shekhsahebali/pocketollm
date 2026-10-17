@@ -1,8 +1,10 @@
 import Constants from 'expo-constants';
+import * as Device from 'expo-device';
+import { Paths } from 'expo-file-system';
 import { router } from 'expo-router';
 import { BuildInfo } from 'llama.rn';
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { loadModel, modelStore, unloadModel } from '@/ai/modelManager';
@@ -353,6 +355,30 @@ export default function SettingsScreen() {
         </Section>
 
        
+
+        {/* Device capability */}
+        <Section title="Device capability">
+          <ThemedView type="backgroundElement" style={styles.card}>
+            <ThemedText type="smallBold">
+              {Device.manufacturer && Device.modelName
+                ? `${Device.manufacturer} ${Device.modelName}`
+                : (Device.modelName ?? 'Unknown device')}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {Platform.OS === 'ios' ? 'iOS' : 'Android'} {Device.osVersion ?? ''} ·{' '}
+              {Device.isDevice ? 'Physical device' : 'Emulator / simulator'}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              RAM {Device.totalMemory ? formatBytes(Device.totalMemory) : 'unknown'} ·
+              Free storage {formatBytes(Paths.availableDiskSpace)}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Models load into RAM — the larger 4B–7B entries want most of an 8 GB
+              device to themselves. Free storage is the space model downloads can use.
+            </ThemedText>
+            {/* ponytail: CPU core count needs react-native-device-info — add when asked. */}
+          </ThemedView>
+        </Section>
 
         {/* About */}
         <Section title="About">

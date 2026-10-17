@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { loadModel, modelStore, unloadModel } from '@/ai/modelManager';
@@ -20,7 +20,7 @@ import {
 } from '@/models/downloadManager';
 import { modelsStore, reconcileModels, totalDownloadedBytes } from '@/models/storage';
 import { ModelEntry } from '@/types';
-import { DatabaseCheck, Eye, Type } from 'lucide-react-native';
+import { DatabaseCheck, Eye, Search, Type, X } from 'lucide-react-native';
 
 type ModelsTab = 'browse' | 'downloaded';
 
@@ -31,12 +31,20 @@ export default function ModelsScreen() {
   const downloaded = useStore(modelsStore);
   useStore(downloadStore); // re-render on download progress
   const [tab, setTab] = useState<ModelsTab>('browse');
+  const [query, setQuery] = useState('');
 
   useEffect(() => {
     void reconcileModels().catch(() => {});
   }, []);
 
   const downloadedIds = new Set(downloaded.map((d) => d.id));
+
+  const q = query.trim().toLowerCase();
+  const browseModels = q
+    ? MODEL_CATALOG.filter((e) =>
+        `${e.provider} ${e.name} ${e.description} ${e.params} ${e.quant}`.toLowerCase().includes(q),
+      )
+    : MODEL_CATALOG;
 
   const onDownloadPress = async (entry: ModelEntry) => {
     if (isDownloading(entry.id)) return;
@@ -166,7 +174,7 @@ export default function ModelsScreen() {
                       <View style={styles.flexShrink}>
                         <ThemedText type="smallBold">{entry.name}</ThemedText>
                         <ThemedText type="small" themeColor="textSecondary">
-                          {entry.params} · {entry.quant} · {formatBytes(onDisk)} on disk
+                          {entry.provider} · {entry.params} · {entry.quant} · {formatBytes(onDisk)} on disk
                         </ThemedText>
                       </View>
                       <View style={styles.tagRow}>
@@ -207,15 +215,44 @@ export default function ModelsScreen() {
           </Section>
         ) : (
           <>
-            <Section title="All models">
-              {MODEL_CATALOG.map((entry) => (
-                <CatalogCard
-                  key={entry.id}
-                  entry={entry}
-                  installed={downloadedIds.has(entry.id)}
-                  onDownload={() => void onDownloadPress(entry)}
-                />
-              ))}
+            <View
+              style={[
+                styles.searchRow,
+                { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+              ]}>
+              <Search size={16} color={theme.textSecondary} />
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search models"
+                placeholderTextColor={theme.textSecondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="search"
+                style={[styles.searchInput, { color: theme.text }]}
+                accessibilityLabel="Search models"
+              />
+              {query.length > 0 && (
+                <Pressable onPress={() => setQuery('')} hitSlop={8} accessibilityLabel="Clear search">
+                  <X size={16} color={theme.textSecondary} />
+                </Pressable>
+              )}
+            </View>
+            <Section title={q ? `Results (${browseModels.length})` : 'All models'}>
+              {browseModels.length === 0 ? (
+                <ThemedText type="small" themeColor="textSecondary">
+                  No models match “{query.trim()}”.
+                </ThemedText>
+              ) : (
+                browseModels.map((entry) => (
+                  <CatalogCard
+                    key={entry.id}
+                    entry={entry}
+                    installed={downloadedIds.has(entry.id)}
+                    onDownload={() => void onDownloadPress(entry)}
+                  />
+                ))
+              )}
             </Section>
             
             <ThemedText type="small" themeColor="textSecondary">
@@ -256,7 +293,7 @@ function CatalogCard({
             {entry.name}
           </ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            {entry.params} · {entry.quant} · ~{formatBytes(total)}
+            {entry.provider} · {entry.params} · {entry.quant} · ~{formatBytes(total)}
           </ThemedText>
         </View>
         <View style={styles.tagRow}>
@@ -444,6 +481,20 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   linkRow: { flexDirection: 'row', gap: Spacing.three },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one + 2,
+    borderRadius: Spacing.three,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: 0,
+    fontSize: 15,
+  },
   actionButton: {
     paddingVertical: Spacing.one + 2,
     paddingHorizontal: Spacing.three,
