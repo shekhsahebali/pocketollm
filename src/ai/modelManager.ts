@@ -1,0 +1,193 @@
+import type { LlamaContext } from 'llama.rn';
+
+import {
+  createContext,
+  friendlyError,
+  generate as llmGenerate,
+  release,
+  stop as llmStop,
+  type GenerateOptions,
+  type GenerateOutcome,
+  type LlmMessage,
+} from '@/ai/llmService';
+import { createStore } from '@/hooks/use-store';
+import { getModelEntry } from '@/models/catalog';
+import { getModelMmprojPath, getModelPath, isDownloaded } from '@/models/storage';
+import { settingsStore } from '@/settings/settingsRepository';
+import { LoadedModelInfo, ModelStatus } from '@/types';
+
+export interface ModelManagerState {
+  status: ModelStatus;
+  model: LoadedModelInfo | null;
+  /** 0–100 while loading. */
+  loadProgress: number;
+  /** Context size the active context was initialized with (Settings reload hint). */
+  loadedContextSize: number | null;
+  /** True when the loaded model's vision projector started successfully. */
+  vision: boolean;
+  generating: boolean;
+  error: string | null;
+}
+
+const initialState: ModelManagerState = {
+  status: 'unloaded',
+  model: null,
+  loadProgress: 0,
+  loadedContextSize: null,
+  vision: false,
+  generating: false,
+  error: null,
+};
+
+export const modelStore = createStore<ModelManagerState>(initialState);
+
+function patch(partial: Partial<ModelManagerState>): void {
+  modelStore.set({ ...modelStore.get(), ...partial });
+}
+
+let context: LlamaContext | null = null;
+
+/**
+ * All lifecycle operations (load / unload / generate) run through one queue
+ * so a single native context is never used or created concurrently.
+ */
+let chain: Promise<unknown> = Promise.resolve();
+function enqueue<T>(fn: () => Promise<T>): Promise<T> {
+  const run = chain.then(fn, fn);
+  chain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+export function getLoadedContext(): LlamaContext | null {
+  return context;
+}
+
+export function isModelLoaded(): boolean {
+  return modelStore.get().status === 'loaded' && context !== null;
+}
+
+/**
+ * Loads a downloaded model. Releases any previously loaded context first.
+ * On failure the state is a consistent "no model" + error — never a stale
+ * "loaded" state pointing at the old model.
+ */
+export function loadModel(id: string): Promise<void> {
+  return enqueue(async () => {
+    patch({ status: 'loading', loadProgress: 0, error: null, model: null, vision: false });
+
+    if (context) {
+      try {
+        await release(context);
+      } catch {
+        /* releasing a broken context must not block loading the next one */
+      }
+      context = null;
+    }
+
+    if (!isDownloaded(id)) {
+      patch({
+        status: 'unloaded',
+        error: 'Model file is missing. Download it again from the Models screen.',
+      });
+      return;
+    }
+    const path = getModelPath(id);
+    const entry = getModelEntry(id);
+    if (!path || !entry) {
+      patch({
+        status: 'unloaded',
+        error: 'Model file is missing. Download it again from the Models screen.',
+      });
+      return;
+    }
+
+    const nCtx = settingsStore.get().contextSize;
+    const mmprojPath = entry.mmproj ? getModelMmprojPath(id) : null;
+    try {
+      const created = await createContext(
+        path,
+        nCtx,
+        (percent) => {
+          patch({ loadProgress: Math.max(0, Math.min(100, Math.round(percent))) });
+        },
+        mmprojPath ? { mmprojPath, imageMaxTokens: settingsStore.get().imageMaxTokens } : undefined,
+      );
+      context = created.context;
+      patch({
+        status: 'loaded',
+        model: { id, name: entry.name },
+        loadProgress: 100,
+        loadedContextSize: nCtx,
+        vision: created.visionOk,
+        // Vision models that fail projector init still chat — with a clear warning.
+        error:
+          entry.mmproj && !created.visionOk
+            ? 'Vision could not start — image attachments are off, text chat works. Try deleting and re-downloading the model.'
+            : null,
+      });
+    } catch (e) {
+      context = null;
+      patch({
+        status: 'unloaded',
+        model: null,
+        loadProgress: 0,
+        loadedContextSize: null,
+        vision: false,
+        error: friendlyError(e, 'Could not load the model.'),
+      });
+    }
+  });
+}
+
+/** Frees runtime resources. The file stays on disk. */
+export function unloadModel(): Promise<void> {
+  return enqueue(async () => {
+    if (context) {
+      try {
+        await release(context);
+      } catch (e) {
+        patch({ error: friendlyError(e, 'Unloading failed.') });
+      }
+      context = null;
+    }
+    patch({
+      status: 'unloaded',
+      model: null,
+      loadProgress: 0,
+      loadedContextSize: null,
+      vision: false,
+      generating: false,
+    });
+  });
+}
+
+/** Runs one inference over the given message history (queued). */
+export function runCompletion(
+  messages: LlmMessage[],
+  options: GenerateOptions,
+  onPartial: (text: string) => void,
+): Promise<GenerateOutcome> {
+  return enqueue(async () => {
+    if (!context || modelStore.get().status !== 'loaded') {
+      throw new Error('No model is loaded. Download or load a model first.');
+    }
+    patch({ generating: true });
+    try {
+      return await llmGenerate(context, messages, options, onPartial);
+    } finally {
+      patch({ generating: false });
+    }
+  });
+}
+
+/**
+ * Stops the in-flight generation. Deliberately NOT queued: it must be able
+ * to interrupt a completion that is already running.
+ */
+export function stopGeneration(): void {
+  const ctx = context;
+  if (ctx) void llmStop(ctx).catch(() => {});
+}

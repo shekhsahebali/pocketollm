@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "openpocket",
+    "name": "Local AI",
     "slug": "openpocket",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -11,6 +11,8 @@
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.openpocket.app",
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -31,6 +33,12 @@
           "backgroundColor": "#208AEF",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
+        }
+      ],
+      [
+        "llama.rn",
+        {
+          "enableOpenCLAndHexagon": false
         }
       ]
     ],

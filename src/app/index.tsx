@@ -1,98 +1,710 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Clipboard from 'expo-clipboard';
+import * as DocumentPicker from 'expo-document-picker';
+import { File } from 'expo-file-system';
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
+import { router } from 'expo-router';
+import { AlertCircle, Menu, Plus, SendHorizontal, Square, SquarePen, X } from 'lucide-react-native';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  Animated,
+  FlatList,
+  KeyboardAvoidingView,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
+import { modelStore } from '@/ai/modelManager';
+import { deleteConversation, listConversations } from '@/chat/chatRepository';
+import {
+  chatStore,
+  initChatSession,
+  newChat,
+  openConversation,
+  retryLastTurn,
+  sendUserMessage,
+  stopStreaming,
+} from '@/chat/chatSession';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
+import { useStore } from '@/hooks/use-store';
+import { useTheme } from '@/hooks/use-theme';
+import { Attachment, ChatMessage, Conversation } from '@/types';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
+const SIDEBAR_WIDTH = 200;
+
+export default function ChatScreen() {
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const { conversation, sending, error } = useStore(chatStore);
+  const model = useStore(modelStore);
+  const [draft, setDraft] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [history, setHistory] = useState<Conversation[]>([]);
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
+  // Slides in from the left; starts off-screen. Native driver for 60fps.
+  // Lazy useState instead of useRef: Animated.Value is render-stable state,
+  // and reading ref.current during render trips react-hooks/refs.
+  const [sidebarX] = useState(() => new Animated.Value(-SIDEBAR_WIDTH));
+
+  useEffect(() => {
+    void initChatSession();
+  }, []);
+
+  // Newest at the top of an inverted list = visually newest at the bottom.
+  const invertedMessages = useMemo(
+    () => (conversation ? [...conversation.messages].reverse() : []),
+    [conversation],
   );
-}
 
-export default function HomeScreen() {
+  const modelLoaded = model.status === 'loaded';
+  const canSend =
+    modelLoaded && !sending && (draft.trim().length > 0 || attachment !== null);
+
+  const onSend = () => {
+    if (!canSend) return;
+    if (attachment?.kind === 'image' && !model.vision) {
+      Alert.alert(
+        'Vision not available',
+        'The loaded model cannot process images. Detach the photo or load a vision model from the Models tab.',
+      );
+      return;
+    }
+    const text = draft;
+    const att = attachment ?? undefined;
+    setDraft('');
+    setAttachment(null);
+    void sendUserMessage(text, att);
+  };
+
+  const openSidebar = () => {
+    setSidebarOpen(true);
+    Animated.timing(sidebarX, { toValue: 0, duration: 180, useNativeDriver: true }).start();
+    void listConversations().then((all) => {
+      setHistory(all);
+    });
+  };
+
+  const closeSidebar = () => {
+    Animated.timing(sidebarX, {
+      toValue: -SIDEBAR_WIDTH,
+      duration: 150,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setSidebarOpen(false);
+    });
+  };
+
+  const pickPhoto = async () => {
+    if (!model.vision) {
+      Alert.alert(
+        'Vision model needed',
+        'Load a vision model (for example Qwen3-VL) from the Models tab to attach photos.',
+      );
+      return;
+    }
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.85,
+      });
+      const asset = res.canceled ? null : res.assets?.[0];
+      if (asset) setAttachment({ kind: 'image', uri: asset.uri, name: asset.fileName ?? 'Photo' });
+    } catch {
+      Alert.alert('Could not open photos', 'Try again, or attach a text file instead.');
+    }
+  };
+
+  const pickFile = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ['text/*', 'application/json'],
+        copyToCacheDirectory: true,
+      });
+      const asset = res.canceled ? null : res.assets?.[0];
+      if (!asset) return;
+      if (asset.size != null && asset.size > 20_000) {
+        Alert.alert('File too large', 'Attached text files are limited to 20 KB.');
+        return;
+      }
+      const text = await new File(asset.uri).text();
+      setAttachment({ kind: 'file', name: asset.name, text });
+    } catch {
+      Alert.alert('Could not read file', 'Only plain text files can be attached.');
+    }
+  };
+
+  const onAttach = () => {
+    Alert.alert('Attach', 'Add to your message', [
+      { text: 'Photo', onPress: () => void pickPhoto() },
+      { text: 'File', onPress: () => void pickFile() },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const onDeleteConversation = (conv: Conversation) => {
+    if (sending) return;
+    Alert.alert('Delete conversation?', `"${conv.title}" will be removed permanently.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          const isCurrent = conversation?.id === conv.id;
+          void deleteConversation(conv.id).then(() => {
+            if (isCurrent) void newChat();
+            setHistory((h) => h.filter((c) => c.id !== conv.id));
+          });
+        },
+      },
+    ]);
+  };
+
+  const copyMessage = (message: ChatMessage) => {
+    if (!message.content || message.pending) return;
+    Alert.alert('Assistant message', undefined, [
+      { text: 'Copy', onPress: () => void Clipboard.setStringAsync(message.content) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
+  const statusLabel = (() => {
+    if (model.status === 'loading') {
+      return model.loadProgress > 0 ? `Loading ${model.loadProgress}%` : 'Loading…';
+    }
+    if (model.status === 'loaded') return model.model?.name ?? 'Loaded';
+    if (model.status === 'error') return 'Model error';
+    return 'No model loaded';
+  })();
+
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+    <ThemedView style={styles.flex}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        // ponytail: edge-to-edge (RN 0.88 default) leaves the Android IME
+        // overlaying the window, so adjustResize doesn't move our content —
+        // verified on API 36 (composer bounds identical with keyboard open).
+        // KAV padding covers it everywhere; if a device also resizes the
+        // window the composer just floats a bit high. Upgrade path:
+        // expo-build-properties with edgeToEdgeEnabled=false + adjustResize.
+        behavior="padding">
+        {/* Header */}
+        <View
+          style={[
+            styles.header,
+            {
+              paddingTop: insets.top + Spacing.two,
+              borderBottomColor: theme.border,
+            },
+          ]}>
+          <View style={styles.headerTitleBlock}>
+            <Pressable
+              onPress={openSidebar}
+              hitSlop={8}
+              style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+              accessibilityLabel="Open chat history">
+              <ThemedText type="smallBold" themeColor="accent" style={styles.hamburger}>
+                <Menu size={20} color={theme.accent} />
+              </ThemedText>
+            </Pressable>
+            <ThemedText type="smallBold" style={styles.appTitle}>
+              PocketOllm
+            </ThemedText>
+           
+          
+          </View>
+          <View style={styles.headerActions}>
+            <Pressable
+              onPress={() => void newChat()}
+              hitSlop={8}
+              style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}>
+              <ThemedText type="small" themeColor="accent">
+               <SquarePen size={20} color={theme.accent} />
+              </ThemedText>
+            </Pressable>
+          </View>
+        </View>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
+        {/* No-model banner with navigation to Models */}
+        {!modelLoaded && (
+          <Pressable
+            onPress={() => router.push('/models')}
+            style={[styles.banner, { backgroundColor: theme.backgroundElement }]}>
+            <ThemedText type="small" themeColor="textSecondary">
+              {model.status === 'loading'
+                ? 'A model is loading…'
+                : 'No model is loaded. Download and load a model to start chatting.'}
+            </ThemedText>
+            {model.status !== 'loading' && (
+              <ThemedText type="small" themeColor="accent" style={styles.bannerAction}>
+                Open Models →
+              </ThemedText>
+            )}
+          </Pressable>
+        )}
 
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
+        {/* Error / retry banner */}
+        {error && (
+          <View style={[styles.banner, { backgroundColor: theme.backgroundElement }]}>
+            <ThemedText type="small" style={{ color: theme.danger }}>
+              {error}
+            </ThemedText>
+            <View style={styles.errorActions}>
+              <Pressable
+                onPress={() => void retryLastTurn()}
+                style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}>
+                <ThemedText type="small" themeColor="accent">
+                  Retry
+                </ThemedText>
+              </Pressable>
+            </View>
+          </View>
+        )}
+
+        {/* Conversation */}
+        {invertedMessages.length === 0 ? (
+          <View style={styles.emptyState}>
+            <ThemedText type="subtitle" style={styles.emptyTitle}>
+              PocketOllm
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.emptyBody}>
+              {modelLoaded
+                ? 'Chat fully on-device with the loaded model. Nothing you write leaves your phone.'
+                : 'Once a model is downloaded, your conversations work with no internet connection.'}
+            </ThemedText>
+            {!modelLoaded && (
+              <Pressable
+                onPress={() => router.push('/models')}
+                style={({ pressed }) => [
+                  styles.primaryButton,
+                  { backgroundColor: theme.accent },
+                  pressed && styles.pressed,
+                ]}>
+                <ThemedText type="smallBold" style={{ color: theme.accentText }}>
+                  Browse models
+                </ThemedText>
+              </Pressable>
+            )}
+          </View>
+        ) : (
+          <FlatList
+            data={invertedMessages}
+            inverted
+            keyExtractor={(m) => m.id}
+            contentContainerStyle={styles.listContent}
+            keyboardDismissMode="interactive"
+            renderItem={({ item }) => (
+              <Bubble
+                message={item}
+                isUser={item.role === 'user'}
+                onLongPress={() => item.role === 'assistant' && copyMessage(item)}
+              />
+            )}
           />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+        )}
 
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
+        {/* Composer */}
+        <View
+          style={[
+            styles.composerColumn,
+            { borderTopColor: theme.border, backgroundColor: theme.background },
+          ]}>
+          {attachment && (
+            <View style={[styles.chip, { backgroundColor: theme.backgroundElement }]}>
+              {attachment.kind === 'image' && (
+                <Image source={{ uri: attachment.uri }} style={styles.chipThumb} contentFit="cover" />
+              )}
+              <ThemedText type="small" numberOfLines={1} style={styles.flex}>
+                {attachment.name}
+              </ThemedText>
+              <Pressable
+                onPress={() => setAttachment(null)}
+                hitSlop={8}
+                accessibilityLabel="Remove attachment">
+                <ThemedText type="small" themeColor="textSecondary">
+                  <AlertCircle size={20} />
+                </ThemedText>
+              </Pressable>
+            </View>
+          )}
+          <View
+            style={[
+              styles.composer,
+              {
+                backgroundColor: theme.backgroundElement,
+                borderColor: theme.border,
+              },
+            ]}>
+            <Pressable
+              onPress={onAttach}
+              disabled={!modelLoaded || sending}
+              style={({ pressed }) => [
+                styles.attachButton,
+                {
+                  opacity: !modelLoaded || sending ? 0.45 : pressed ? 0.6 : 1,
+                },
+              ]}
+              accessibilityLabel="Attach photo or file">
+              <ThemedText type="smallBold" themeColor="text">
+                <Plus size={20} color={theme.text} />
+              </ThemedText>
+            </Pressable>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              placeholder={modelLoaded ? 'Message' : 'Select a model to chat'}
+              placeholderTextColor={theme.textSecondary}
+              multiline
+              editable={modelLoaded && !sending}
+              style={[
+                styles.input,
+                {
+                  color: theme.text,
+                },
+              ]}
+              maxLength={8000}
+              accessibilityLabel="Message input"
+            />
+            {sending ? (
+              <Pressable
+                onPress={stopStreaming}
+                style={({ pressed }) => [
+                  styles.sendButton,
+                  { backgroundColor: theme.danger },
+                  pressed && styles.pressed,
+                ]}
+                accessibilityLabel="Stop generation">
+                <ThemedText type="smallBold" style={{ color: '#fff' }}>
+                  <Square size={18} color="#fff" />
+                </ThemedText>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={onSend}
+                disabled={!canSend}
+                style={({ pressed }) => [
+                  styles.sendButton,
+                  {
+                    backgroundColor: canSend ? theme.accent : theme.backgroundSelected,
+                    opacity: canSend && !pressed ? 1 : 0.8,
+                  },
+                ]}
+                accessibilityLabel="Send message">
+                <ThemedText
+                  type="smallBold"
+                  style={{ color: canSend ? theme.accentText : theme.textSecondary }}>
+                  <SendHorizontal size={18} color={canSend ? theme.accentText : theme.textSecondary} />
+                </ThemedText>
+              </Pressable>
+            )}
+          </View>
+        </View>
+        {/* <View style={{ height: BottomTabInset, backgroundColor: theme.background }} /> */}
+      </KeyboardAvoidingView>
+
+      {/* ChatGPT-style history sidebar (top-left ☰) */}
+      {sidebarOpen && (
+        <>
+          <Pressable
+            style={styles.backdrop}
+            onPress={closeSidebar}
+            accessibilityLabel="Close chat history"
+          />
+          <Animated.View
+            style={[
+              styles.sidebar,
+              {
+                transform: [{ translateX: sidebarX }],
+                backgroundColor: theme.background,
+                borderRightColor: theme.border,
+                paddingTop: insets.top + Spacing.two,
+              },
+            ]}>
+            <View style={styles.sidebarHeader}>
+              <ThemedText type="smallBold">Chats</ThemedText>
+              <Pressable
+                onPress={() => {
+                  closeSidebar();
+                  void newChat();
+                }}
+                hitSlop={8}
+                style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}>
+                <ThemedText type="small" themeColor="accent">
+                   <SquarePen size={20} color={theme.accent} />
+                </ThemedText>
+              </Pressable>
+            </View>
+            {history.length === 0 ? (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.sidebarEmpty}>
+                No conversations yet.
+              </ThemedText>
+            ) : (
+              <ScrollView style={styles.flex}>
+                {history.map((conv) => (
+                  <View
+                    key={conv.id}
+                    style={[
+                      styles.historyRow,
+                      conv.id === conversation?.id && {
+                        backgroundColor: theme.backgroundSelected,
+                      },
+                    ]}>
+                    <Pressable
+                      onPress={() => {
+                        closeSidebar();
+                        void openConversation(conv.id);
+                      }}
+                      style={styles.flex}
+                      accessibilityLabel={`Open ${conv.title}`}>
+                      <ThemedText type="small" numberOfLines={1}>
+                        {conv.title}
+                      </ThemedText>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {conv.messages.length} messages
+                      </ThemedText>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => onDeleteConversation(conv)}
+                      hitSlop={10}
+                      disabled={sending}
+                      style={({ pressed }) => pressed && styles.pressed}
+                      accessibilityLabel={`Delete ${conv.title}`}>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        <X size={20} color={theme.textSecondary} />
+                      </ThemedText>
+                    </Pressable>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+           
+          </Animated.View>
+        </>
+      )}
     </ThemedView>
   );
 }
 
+function Bubble({
+  message,
+  isUser,
+  onLongPress,
+}: {
+  message: ChatMessage;
+  isUser: boolean;
+  onLongPress: () => void;
+}) {
+  const theme = useTheme();
+  const isError = Boolean(message.error);
+
+  return (
+    <View
+      style={[
+        styles.bubbleRow,
+        { justifyContent: isUser ? 'flex-end' : 'flex-start' },
+      ]}>
+      <Pressable
+        onLongPress={onLongPress}
+        delayLongPress={250}
+        style={[
+          styles.bubble,
+          {
+            backgroundColor: isUser ? theme.userBubble : theme.backgroundElement,
+            // Hairline border keeps assistant bubbles readable on any surface;
+            // user bubbles sit on accent color and don't need one.
+            borderColor: isError
+              ? theme.danger
+              : isUser
+                ? 'transparent'
+                : theme.border,
+          },
+        ]}>
+        {message.imageUri ? (
+          // ponytail: if the picker's cache copy was cleared the thumb just
+          // disappears — text history is unaffected. Upgrade path: copy the
+          // photo into document storage when persisting the conversation.
+          <Image source={{ uri: message.imageUri }} style={styles.bubbleImage} contentFit="cover" />
+        ) : null}
+        {message.content.length === 0 && message.pending ? (
+          <ThemedText
+            type="small"
+            style={{ color: isUser ? theme.accentText : theme.textSecondary }}>
+            thinking…
+          </ThemedText>
+        ) : (
+          <ThemedText
+            type="default"
+            style={{
+              color: isUser ? theme.accentText : isError ? theme.danger : theme.text,
+            }}>
+            {message.content}
+            {message.pending ? ' ▍' : ''}
+          </ThemedText>
+        )}
+      </Pressable>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
+  flex: { flex: 1 },
+  header: {
     flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
     alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
+    paddingHorizontal: Spacing.three,
+    paddingBottom: Spacing.two,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: Spacing.two,
   },
-  heroSection: {
+  headerTitleBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+    flexShrink: 1,
+  },
+  appTitle: { fontSize: 16 },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  statusText: { flexShrink: 1 },
+  headerActions: {
+    flexDirection: 'row',
+    gap: Spacing.three,
+    marginLeft: 'auto',
+  },
+  headerButton: { paddingVertical: Spacing.one, paddingHorizontal: Spacing.one },
+  pressed: { opacity: 0.6 },
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    gap: Spacing.two,
+    flexWrap: 'wrap',
+  },
+  bannerAction: { marginLeft: 'auto' },
+  errorActions: { marginLeft: 'auto' },
+  emptyState: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
     paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
-  },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
     gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
+  },
+  emptyTitle: { fontSize: 28, lineHeight: 34 },
+  emptyBody: { textAlign: 'center' },
+  primaryButton: {
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.four,
     borderRadius: Spacing.four,
+  },
+  listContent: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    gap: Spacing.two,
+  },
+  bubbleRow: {
+    flexDirection: 'row',
+    marginBottom: Spacing.one,
+  },
+  bubble: {
+    maxWidth: '85%',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.four,
+    borderWidth: 1,
+  },
+  hamburger: { fontSize: 20, lineHeight: 22 },
+  composerColumn: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    marginHorizontal: Spacing.three,
+    marginTop: Spacing.two,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.one,
+    borderRadius: Spacing.three,
+  },
+  chipThumb: { width: 28, height: 28, borderRadius: Spacing.one },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+    marginHorizontal: Spacing.three,
+    marginTop: Spacing.two,
+    marginBottom: Spacing.two,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 28,
+    gap: Spacing.one,
+  },
+  attachButton: {
+    minHeight: 36,
+    minWidth: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 18,
+  },
+  input: {
+    flex: 1,
+    minHeight: 38,
+    maxHeight: 120,
+    paddingHorizontal: Spacing.one,
+    paddingVertical: Spacing.one,
+    fontSize: 16,
+  },
+  sendButton: {
+    width: 36,
+    height: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 18,
+  },
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  sidebar: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    width: SIDEBAR_WIDTH,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: Spacing.three,
+    gap: Spacing.two,
+  },
+  sidebarHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.one,
+  },
+  sidebarEmpty: { paddingVertical: Spacing.three },
+  sidebarHint: { textAlign: 'center', paddingVertical: Spacing.two },
+  historyRow: {
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.two,
+    borderRadius: Spacing.two,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  bubbleImage: {
+    width: 180,
+    height: 180,
+    borderRadius: Spacing.two,
+    marginBottom: Spacing.one,
   },
 });
