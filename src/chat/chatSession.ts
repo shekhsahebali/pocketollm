@@ -13,6 +13,8 @@ import { settingsStore } from '@/settings/settingsRepository';
 import { Attachment, ChatMessage, Conversation } from '@/types';
 import { File } from 'expo-file-system';
 
+import { applyUserEdit } from './editRule';
+
 export interface ChatState {
   conversation: Conversation | null;
   sending: boolean;
@@ -173,6 +175,33 @@ export async function sendUserMessage(rawText: string, attachment?: Attachment):
   };
   patch({ conversation: next });
 
+  await runTurn(next, assistantMsg.id);
+}
+
+/**
+ * Edits a sent user message and regenerates: the message content is replaced
+ * and everything after it (the old reply) is dropped before the new turn runs.
+ */
+export async function editUserMessage(messageId: string, rawText: string): Promise<void> {
+  const { sending, conversation } = chatStore.get();
+  if (sending || !conversation) return;
+  const text = rawText.trim();
+  if (!text) return;
+  const messages = applyUserEdit(conversation.messages, messageId, text);
+  if (!messages) return;
+
+  patch({ sending: true, error: null });
+  const assistantMsg: ChatMessage = {
+    id: `${conversation.id}-a${Date.now()}`,
+    role: 'assistant',
+    content: '',
+    createdAt: Date.now(),
+    pending: true,
+  };
+  // ponytail: the history title keeps the original first-message text after an
+  // edit — recompute it in saveConversation if that ever matters.
+  const next: Conversation = { ...conversation, messages: [...messages, assistantMsg] };
+  patch({ conversation: next });
   await runTurn(next, assistantMsg.id);
 }
 

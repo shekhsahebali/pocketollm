@@ -86,9 +86,16 @@ export async function generate(
       top_p: options.topP,
       top_k: options.topK,
       penalty_repeat: options.repeatPenalty,
+      // 'none' (the llama.rn default) leaves thinking mixed into the answer
+      // for reasoning models; 'auto' parses it into reasoning_content.
+      reasoning_format: 'auto',
     },
     (data) => {
-      if (typeof data.accumulated_text === 'string') {
+      // content is the parser-separated answer (thinking stripped); fall back
+      // to raw accumulation when the template can't be split.
+      if (typeof data.content === 'string') {
+        accumulated = data.content;
+      } else if (typeof data.accumulated_text === 'string') {
         accumulated = data.accumulated_text;
       } else if (data.token) {
         accumulated += data.token;

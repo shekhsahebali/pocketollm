@@ -4,7 +4,19 @@ import { File } from 'expo-file-system';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
-import { AlertCircle, Menu, Plus, SendHorizontal, Square, SquarePen, X } from 'lucide-react-native';
+import {
+  AlertCircle,
+  Camera,
+  FileText,
+  Image as ImageIcon,
+  Menu,
+  Pencil,
+  Plus,
+  SendHorizontal,
+  Square,
+  SquarePen,
+  X,
+} from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
@@ -23,6 +35,7 @@ import { modelStore } from '@/ai/modelManager';
 import { deleteConversation, listConversations } from '@/chat/chatRepository';
 import {
   chatStore,
+  editUserMessage,
   initChatSession,
   newChat,
   openConversation,
@@ -30,6 +43,7 @@ import {
   sendUserMessage,
   stopStreaming,
 } from '@/chat/chatSession';
+import { MarkdownText } from '@/components/markdown-text';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
@@ -48,6 +62,10 @@ export default function ChatScreen() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [history, setHistory] = useState<Conversation[]>([]);
   const [attachment, setAttachment] = useState<Attachment | null>(null);
+  // Id of the sent user message being edited; send then regenerates from it.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  // Custom dropdown over the + button (native Alert can't be themed).
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   // Slides in from the left; starts off-screen. Native driver for 60fps.
   // Lazy useState instead of useRef: Animated.Value is render-stable state,
   // and reading ref.current during render trips react-hooks/refs.
@@ -78,9 +96,27 @@ export default function ChatScreen() {
     }
     const text = draft;
     const att = attachment ?? undefined;
+    const target = editingId;
     setDraft('');
     setAttachment(null);
-    void sendUserMessage(text, att);
+    setEditingId(null);
+    if (target) void editUserMessage(target, text);
+    else void sendUserMessage(text, att);
+  };
+
+  // Long-press a sent user message: load it into the composer for editing.
+  // The conversation is only truncated when the edit is actually sent, so
+  // cancel just restores the composer.
+  const startEdit = (message: ChatMessage) => {
+    if (sending || message.pending) return;
+    setEditingId(message.id);
+    setAttachment(null);
+    setDraft(message.content);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setDraft('');
   };
 
   const openSidebar = () => {
@@ -101,7 +137,7 @@ export default function ChatScreen() {
     });
   };
 
-  const pickPhoto = async () => {
+  const pickImage = async (fromCamera: boolean) => {
     if (!model.vision) {
       Alert.alert(
         'Vision model needed',
@@ -110,14 +146,26 @@ export default function ChatScreen() {
       return;
     }
     try {
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        quality: 0.85,
-      });
+      if (fromCamera) {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert(
+            'Camera access needed',
+            'Allow camera access in system settings to take a photo.',
+          );
+          return;
+        }
+      }
+      const res = fromCamera
+        ? await ImagePicker.launchCameraAsync({ quality: 0.85 })
+        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
       const asset = res.canceled ? null : res.assets?.[0];
       if (asset) setAttachment({ kind: 'image', uri: asset.uri, name: asset.fileName ?? 'Photo' });
     } catch {
-      Alert.alert('Could not open photos', 'Try again, or attach a text file instead.');
+      Alert.alert(
+        fromCamera ? 'Could not open camera' : 'Could not open photos',
+        'Try again, or attach a text file instead.',
+      );
     }
   };
 
@@ -140,13 +188,11 @@ export default function ChatScreen() {
     }
   };
 
-  const onAttach = () => {
-    Alert.alert('Attach', 'Add to your message', [
-      { text: 'Photo', onPress: () => void pickPhoto() },
-      { text: 'File', onPress: () => void pickFile() },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  };
+  const attachOptions = [
+    { icon: Camera, label: 'Camera', run: () => void pickImage(true) },
+    { icon: ImageIcon, label: 'Photo library', run: () => void pickImage(false) },
+    { icon: FileText, label: 'File', run: () => void pickFile() },
+  ];
 
   const onDeleteConversation = (conv: Conversation) => {
     if (sending) return;
@@ -212,7 +258,11 @@ export default function ChatScreen() {
           </View>
           <View style={styles.headerActions}>
             <Pressable
-              onPress={() => void newChat()}
+              onPress={() => {
+                setEditingId(null);
+                setDraft('');
+                void newChat();
+              }}
               hitSlop={8}
               style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}>
               <ThemedText type="small" themeColor="accent">
@@ -294,7 +344,10 @@ export default function ChatScreen() {
               <Bubble
                 message={item}
                 isUser={item.role === 'user'}
-                onLongPress={() => item.role === 'assistant' && copyMessage(item)}
+                onLongPress={() =>
+                  item.role === 'assistant' ? copyMessage(item) : startEdit(item)
+                }
+                onEdit={item.role === 'user' ? () => startEdit(item) : undefined}
               />
             )}
           />
@@ -306,6 +359,21 @@ export default function ChatScreen() {
             styles.composerColumn,
             { borderTopColor: theme.border, backgroundColor: theme.background },
           ]}>
+          {editingId && (
+            <View style={[styles.chip, { backgroundColor: theme.backgroundElement }]}>
+              <ThemedText type="small" themeColor="accent" style={styles.flex}>
+                Editing message — send to replace its reply
+              </ThemedText>
+              <Pressable
+                onPress={cancelEdit}
+                hitSlop={8}
+                accessibilityLabel="Cancel editing">
+                <ThemedText type="small" themeColor="textSecondary">
+                  <X size={20} color={theme.textSecondary} />
+                </ThemedText>
+              </Pressable>
+            </View>
+          )}
           {attachment && (
             <View style={[styles.chip, { backgroundColor: theme.backgroundElement }]}>
               {attachment.kind === 'image' && (
@@ -324,6 +392,33 @@ export default function ChatScreen() {
               </Pressable>
             </View>
           )}
+          {attachMenuOpen && (
+            <View
+              style={[
+                styles.attachMenu,
+                { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+              ]}>
+              {attachOptions.map((opt) => {
+                const Icon = opt.icon;
+                return (
+                  <Pressable
+                    key={opt.label}
+                    onPress={() => {
+                      setAttachMenuOpen(false);
+                      opt.run();
+                    }}
+                    style={({ pressed }) => [
+                      styles.attachMenuRow,
+                      pressed && { backgroundColor: theme.backgroundSelected },
+                    ]}
+                    accessibilityLabel={`Attach ${opt.label}`}>
+                    <Icon size={18} color={theme.text} />
+                    <ThemedText type="small">{opt.label}</ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
           <View
             style={[
               styles.composer,
@@ -333,23 +428,30 @@ export default function ChatScreen() {
               },
             ]}>
             <Pressable
-              onPress={onAttach}
-              disabled={!modelLoaded || sending}
+              onPress={() => setAttachMenuOpen((v) => !v)}
+              disabled={!modelLoaded || sending || editingId !== null}
               style={({ pressed }) => [
                 styles.attachButton,
                 {
-                  opacity: !modelLoaded || sending ? 0.45 : pressed ? 0.6 : 1,
+                  opacity:
+                    !modelLoaded || sending || editingId !== null ? 0.45 : pressed ? 0.6 : 1,
                 },
               ]}
               accessibilityLabel="Attach photo or file">
               <ThemedText type="smallBold" themeColor="text">
-                <Plus size={20} color={theme.text} />
+                {attachMenuOpen ? (
+                  <X size={20} color={theme.text} />
+                ) : (
+                  <Plus size={20} color={theme.text} />
+                )}
               </ThemedText>
             </Pressable>
             <TextInput
               value={draft}
               onChangeText={setDraft}
-              placeholder={modelLoaded ? 'Message' : 'Select a model to chat'}
+              placeholder={
+                editingId ? 'Edited message' : modelLoaded ? 'Message' : 'Select a model to chat'
+              }
               placeholderTextColor={theme.textSecondary}
               multiline
               editable={modelLoaded && !sending}
@@ -422,6 +524,8 @@ export default function ChatScreen() {
               <Pressable
                 onPress={() => {
                   closeSidebar();
+                  setEditingId(null);
+                  setDraft('');
                   void newChat();
                 }}
                 hitSlop={8}
@@ -449,6 +553,8 @@ export default function ChatScreen() {
                     <Pressable
                       onPress={() => {
                         closeSidebar();
+                        setEditingId(null);
+                        setDraft('');
                         void openConversation(conv.id);
                       }}
                       style={styles.flex}
@@ -486,10 +592,13 @@ function Bubble({
   message,
   isUser,
   onLongPress,
+  onEdit,
 }: {
   message: ChatMessage;
   isUser: boolean;
   onLongPress: () => void;
+  /** Tap-to-edit affordance shown under user messages. */
+  onEdit?: () => void;
 }) {
   const theme = useTheme();
   const isError = Boolean(message.error);
@@ -528,15 +637,27 @@ function Bubble({
             style={{ color: isUser ? theme.accentText : theme.textSecondary }}>
             thinking…
           </ThemedText>
+        ) : isUser ? (
+          <>
+            <ThemedText type="default" style={{ color: theme.accentText }}>
+              {message.content}
+              {message.pending ? ' ▍' : ''}
+            </ThemedText>
+            {onEdit ? (
+              <Pressable
+                onPress={onEdit}
+                hitSlop={8}
+                style={styles.editPen}
+                accessibilityLabel="Edit message">
+                <Pencil size={13} color={theme.accentText}  />
+              </Pressable>
+            ) : null}
+          </>
         ) : (
-          <ThemedText
-            type="default"
-            style={{
-              color: isUser ? theme.accentText : isError ? theme.danger : theme.text,
-            }}>
-            {message.content}
-            {message.pending ? ' ▍' : ''}
-          </ThemedText>
+          <MarkdownText
+            text={message.content + (message.pending ? ' ▍' : '')}
+            color={isError ? theme.danger : theme.text}
+          />
         )}
       </Pressable>
     </View>
@@ -624,6 +745,20 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
   },
   chipThumb: { width: 28, height: 28, borderRadius: Spacing.one },
+  attachMenu: {
+    marginHorizontal: Spacing.three,
+    marginTop: Spacing.two,
+    borderRadius: Spacing.three,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+  },
+  attachMenuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two + 2,
+  },
   composer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -698,4 +833,6 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.two,
     marginBottom: Spacing.one,
   },
+  editPen: { position: 'absolute', right: Spacing.two, bottom: 0 },
+  editPenIcon: { opacity: 1,},
 });

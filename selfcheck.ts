@@ -1,7 +1,10 @@
 // Runnable logic check for the non-trivial pure rules: `node selfcheck.ts` (Node >= 22.6 strips types).
 import { MODEL_CATALOG, totalSizeBytes } from './src/models/catalog.ts';
 import { DEFAULT_SETTINGS, sanitize } from './src/settings/settingsSanitize.ts';
+import { applyUserEdit } from './src/chat/editRule.ts';
+import { toBlocks } from './src/chat/markdownModel.ts';
 import { titleFromFirstMessage } from './src/chat/titleRule.ts';
+import type { ChatMessage } from './src/types/index.ts';
 import {
   anthropicMessagesToLlm,
   apiKeyMatches,
@@ -304,5 +307,64 @@ ok(
   cChunk.object === 'text_completion' && cChunkChoices[0].text === 'tok' && cChunkChoices[0].finish_reason === null,
   'completions: stream chunk shape',
 );
+
+// --- edit-and-resend (truncate from the edited user message onward) ---
+const mk = (id: string, role: 'user' | 'assistant', content = ''): ChatMessage => ({
+  id,
+  role,
+  content,
+  createdAt: 0,
+});
+const hist = [mk('u1', 'user', 'q1'), mk('a1', 'assistant', 'r1'), mk('u2', 'user', 'q2'), mk('a2', 'assistant', 'r2')];
+const editedMid = applyUserEdit(hist, 'u2', 'new q2');
+ok(
+  editedMid !== null && editedMid.length === 3 && editedMid[2].content === 'new q2',
+  'edit: mid-conversation edit truncates the old reply',
+);
+ok(hist.length === 4 && hist[3].content === 'r2', 'edit: input list untouched');
+const editFirst = applyUserEdit(hist, 'u1', 'fixed');
+ok(
+  editFirst !== null && editFirst.length === 1 && editFirst[0].content === 'fixed',
+  'edit: first-message edit drops all later turns',
+);
+ok(applyUserEdit(hist, 'a1', 'x') === null, 'edit: assistant target rejected');
+ok(applyUserEdit(hist, 'missing', 'x') === null, 'edit: unknown id rejected');
+const imgHist = [mk('u1', 'user', 'look'), mk('a1', 'assistant', 'r')];
+imgHist[0].imageUri = 'file:///photo.jpg';
+const editedImg = applyUserEdit(imgHist, 'u1', 'look closer');
+ok(
+  editedImg !== null && editedImg[0].imageUri === 'file:///photo.jpg',
+  'edit: attached image kept on edited message',
+);
+
+// --- markdown model (assistant bubble rendering) ---
+const mdDoc = toBlocks(
+  '# Title\n\nHello **bold** and *em* with `code`.\n\n```js\nlet x = 1;\n```\n\n- one\n- two\n\n> quoted\n\n[link](https://example.com)',
+);
+const mdHead = mdDoc[0];
+ok(mdHead.type === 'heading' && mdHead.inlines[0]?.type === 'text', 'markdown: heading parsed');
+const mdPara = mdDoc[1];
+ok(mdPara.type === 'paragraph', 'markdown: paragraph parsed');
+const mdInl = mdPara.type === 'paragraph' ? mdPara.inlines : [];
+ok(mdInl.some((n) => n.type === 'strong'), 'markdown: bold parsed');
+ok(mdInl.some((n) => n.type === 'em'), 'markdown: italic parsed');
+ok(mdInl.some((n) => n.type === 'code'), 'markdown: inline code parsed');
+const mdFence = mdDoc.find((b) => b.type === 'code');
+ok(
+  mdFence !== undefined && mdFence.type === 'code' && mdFence.lang === 'js' && mdFence.text.includes('let x'),
+  'markdown: fenced code block',
+);
+const mdList = mdDoc.find((b) => b.type === 'list');
+ok(
+  mdList !== undefined && mdList.type === 'list' && !mdList.ordered && mdList.items.length === 2,
+  'markdown: bullet list',
+);
+const mdQuote = mdDoc.find((b) => b.type === 'quote');
+ok(mdQuote !== undefined && mdQuote.type === 'quote' && mdQuote.blocks.length >= 1, 'markdown: blockquote');
+ok(
+  mdDoc.some((b) => b.type === 'paragraph' && b.inlines.some((n) => n.type === 'link')),
+  'markdown: link parsed',
+);
+ok(toBlocks('**unterminated dur').length >= 1, 'markdown: streaming partial tolerated');
 
 console.log(`selfcheck: ${checks} checks passed`);
