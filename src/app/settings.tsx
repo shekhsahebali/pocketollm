@@ -1,11 +1,12 @@
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import { Paths } from 'expo-file-system';
+import * as IntentLauncher from 'expo-intent-launcher';
 import { router } from 'expo-router';
 import { BuildInfo } from 'llama.rn';
 import { Smartphone } from 'lucide-react-native';
 import { useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { loadModel, modelStore, unloadModel } from '@/ai/modelManager';
@@ -109,6 +110,23 @@ export default function SettingsScreen() {
     void unloadModel().then(() => loadModel(id));
   };
 
+  // Android battery-optimization exemption — the OS "permission" that decides
+  // whether backgrounded apps may keep running long tasks.
+  const requestBackgroundRunning = async () => {
+    try {
+      const pkg = Constants.expoConfig?.android?.package ?? 'com.openpocket.app';
+      await IntentLauncher.startActivityAsync(
+        IntentLauncher.ActivityAction.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+        { data: `package:${pkg}` },
+      );
+    } catch {
+      Alert.alert(
+        'Could not open the setting',
+        'Open system Settings → Battery → this app and set it to Unrestricted.',
+      );
+    }
+  };
+
   return (
     <ThemedView style={styles.flex}>
       <ScrollView
@@ -155,6 +173,39 @@ export default function SettingsScreen() {
               device to themselves. Free storage is the space model downloads can use.
             </ThemedText>
             {/* ponytail: CPU core count needs react-native-device-info — add when asked. */}
+          </ThemedView>
+        </Section>
+
+        {/* Background running */}
+        <Section title="Background">
+          <ThemedView type="backgroundElement" style={styles.card}>
+            <View style={styles.specRow}>
+              <ThemedText type="smallBold" style={styles.flex}>
+                Long tasks while backgrounded
+              </ThemedText>
+              <Switch
+                value={settings.backgroundRunning}
+                onValueChange={(v) => {
+                  updateSettings({ backgroundRunning: v });
+                }}
+                trackColor={{ false: theme.border, true: theme.accent }}
+                thumbColor={theme.backgroundElement}
+              />
+            </View>
+            <ThemedText type="small" themeColor="textSecondary">
+              {Platform.OS === 'android'
+                ? 'Android can pause or stop apps in the background, interrupting downloads and generation. While this is on, the app holds a wake lock during loads, generation, and downloads, and can be excluded from battery optimization so long tasks keep running when you switch away.'
+                : 'iOS suspends apps in the background — downloads and generation pause until you return. This toggle keeps the screen awake while a task runs in the foreground; there is no permission to request.'}
+            </ThemedText>
+            {settings.backgroundRunning && Platform.OS === 'android' && (
+              <Pressable
+                onPress={() => void requestBackgroundRunning()}
+                style={({ pressed }) => [styles.linkLike, pressed && styles.pressed]}>
+                <ThemedText type="small" themeColor="accent">
+                  Allow background running…
+                </ThemedText>
+              </Pressable>
+            )}
           </ThemedView>
         </Section>
 

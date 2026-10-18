@@ -1,29 +1,30 @@
 {
   "expo": {
     "name": "PocketOllm",
-    "slug": "openpocket",
+    "slug": "pocketollm",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
-    "scheme": "openpocket",
+    "icon": "./assets/img/icon.png",
+    "scheme": "pocketollm",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
     },
     "android": {
-      "package": "com.openpocket.app",
+      "package": "com.pocketollm.app",
       "softwareKeyboardLayoutMode": "resize",
+      "permissions": ["REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "./assets/img/foreground.png",
+        "backgroundImage": "./assets/img/background.png",
+        "monochromeImage": "./assets/img/icon.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": true
     },
     "web": {
       "output": "server",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/img/icon.png"
     },
     "plugins": [
       "expo-router",
@@ -31,7 +32,7 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#208AEF",
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/img/icon.png",
           "imageWidth": 76
         }
       ],

@@ -73,6 +73,8 @@ export interface AppSettings {
   theme: ThemeSetting;
   /** Color palette applied in the current mode (light/dark variant). */
   palette: ColorPalette;
+  /** Hold wake locks during long tasks (model load, generation, downloads). */
+  backgroundRunning: boolean;
   /** Server API keys (empty = auth disabled). Clients send one as `Authorization: Bearer …` or `x-api-key`. */
   apiServerKeys: string[];
 }

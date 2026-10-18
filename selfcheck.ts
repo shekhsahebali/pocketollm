@@ -60,6 +60,9 @@ ok(sanitize({ theme: 'dark' }).theme === 'dark', 'valid theme kept');
 ok(sanitize({ palette: 'indigo' }).palette === 'indigo', 'valid palette kept');
 ok(sanitize({ palette: 'neon' }).palette === 'emerald', 'unknown palette dropped');
 ok(sanitize(DEFAULT_SETTINGS).palette === 'emerald', 'default palette emerald');
+ok(sanitize({ backgroundRunning: false }).backgroundRunning === false, 'background toggle off kept');
+ok(sanitize({ backgroundRunning: 'no' }).backgroundRunning === true, 'non-boolean background toggle dropped');
+ok(sanitize(DEFAULT_SETTINGS).backgroundRunning === true, 'background toggle defaults on');
 
 // --- chat title rule (first user message -> history label) ---
 ok(titleFromFirstMessage('hello world') === 'hello world', 'short title kept');

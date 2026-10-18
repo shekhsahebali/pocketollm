@@ -1,8 +1,10 @@
 import { File, Paths } from 'expo-file-system';
 import * as Network from 'expo-network';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 
 import { createStore } from '@/hooks/use-store';
 import { totalSizeBytes } from '@/models/catalog';
+import { settingsStore } from '@/settings/settingsRepository';
 import {
   deleteModelFile,
   modelFileFor,
@@ -114,6 +116,18 @@ export async function startDownload(entry: ModelEntry): Promise<void> {
   };
   emit(0, entry.approxSizeBytes, true);
 
+  // Per-id tag: concurrent downloads each hold their own wake lock, so one
+  // finishing doesn't let the CPU sleep under another still running.
+  const wakeTag = `download-${entry.id}`;
+  const wake = settingsStore.get().backgroundRunning;
+  if (wake) {
+    try {
+      await activateKeepAwakeAsync(wakeTag);
+    } catch {
+      /* unavailable platform — carry on without the wake lock */
+    }
+  }
+
   const cleanupParts = () => {
     for (const name of [entry.filename, entry.mmproj?.filename]) {
       if (!name) continue;
@@ -180,6 +194,9 @@ export async function startDownload(entry: ModelEntry): Promise<void> {
     controllers.delete(entry.id);
     cleanupParts();
     setStatus(entry.id, { state: 'error', message: e instanceof Error ? e.message : 'Download failed.' });
+  } finally {
+    // Never-activated tag = native no-op.
+    if (wake) deactivateKeepAwake(wakeTag);
   }
 }
 

@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     'You are a helpful, concise assistant running entirely on the user\'s phone.',
   theme: 'system',
   palette: 'emerald',
+  backgroundRunning: true,
   apiServerKeys: [],
 };
 
@@ -61,6 +62,9 @@ export function sanitize(raw: unknown): AppSettings {
   const COLOR_PALETTES = ['emerald', 'indigo', 'ocean', 'rose', 'amber'];
   if (typeof r.palette === 'string' && COLOR_PALETTES.includes(r.palette)) {
     out.palette = r.palette as AppSettings['palette'];
+  }
+  if (typeof r.backgroundRunning === 'boolean') {
+    out.backgroundRunning = r.backgroundRunning;
   }
   out.apiServerKeys = sanitizeApiKeys(r);
   return out;

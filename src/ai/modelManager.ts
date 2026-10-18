@@ -1,5 +1,7 @@
 import type { LlamaContext } from 'llama.rn';
 
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+
 import {
   createContext,
   friendlyError,
@@ -76,7 +78,24 @@ export function isModelLoaded(): boolean {
  */
 export function loadModel(id: string): Promise<void> {
   return enqueue(async () => {
-    patch({ status: 'loading', loadProgress: 0, error: null, model: null, vision: false });
+    // Keep the CPU awake so a load isn't sleep-throttled mid-way (user toggle).
+    if (settingsStore.get().backgroundRunning) {
+      try {
+        await activateKeepAwakeAsync('inference');
+      } catch {
+        /* unavailable platform — carry on without the wake lock */
+      }
+    }
+    try {
+      await loadModelInner(id);
+    } finally {
+      deactivateKeepAwake('inference');
+    }
+  });
+}
+
+async function loadModelInner(id: string): Promise<void> {
+  patch({ status: 'loading', loadProgress: 0, error: null, model: null, vision: false });
 
     if (context) {
       try {
@@ -139,7 +158,6 @@ export function loadModel(id: string): Promise<void> {
         error: friendlyError(e, 'Could not load the model.'),
       });
     }
-  });
 }
 
 /** Frees runtime resources. The file stays on disk. */
@@ -175,9 +193,19 @@ export function runCompletion(
       throw new Error('No model is loaded. Download or load a model first.');
     }
     patch({ generating: true });
+    const wake = settingsStore.get().backgroundRunning;
     try {
+      if (wake) {
+        try {
+          await activateKeepAwakeAsync('inference');
+        } catch {
+          /* unavailable platform — carry on without the wake lock */
+        }
+      }
       return await llmGenerate(context, messages, options, onPartial);
     } finally {
+      // Deactivating a tag that was never activated is a native no-op.
+      if (wake) deactivateKeepAwake('inference');
       patch({ generating: false });
     }
   });
