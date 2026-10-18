@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   systemPrompt:
     'You are a helpful, concise assistant running entirely on the user\'s phone.',
   theme: 'system',
+  palette: 'emerald',
   apiServerKeys: [],
 };
 
@@ -54,6 +55,12 @@ export function sanitize(raw: unknown): AppSettings {
   }
   if (r.theme === 'system' || r.theme === 'light' || r.theme === 'dark') {
     out.theme = r.theme;
+  }
+  // ponytail: list mirrors PALETTES in constants/theme.ts (selfcheck can't
+  // import it — that file pulls in global.css).
+  const COLOR_PALETTES = ['emerald', 'indigo', 'ocean', 'rose', 'amber'];
+  if (typeof r.palette === 'string' && COLOR_PALETTES.includes(r.palette)) {
+    out.palette = r.palette as AppSettings['palette'];
   }
   out.apiServerKeys = sanitizeApiKeys(r);
   return out;

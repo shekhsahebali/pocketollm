@@ -1,17 +1,11 @@
 import { NativeTabs } from 'expo-router/native-tabs';
-import { useColorScheme } from 'react-native';
 
-import { Colors } from '@/constants/theme';
-import { useStore } from '@/hooks/use-store';
-import { settingsStore } from '@/settings/settingsRepository';
+import { useTheme } from '@/hooks/use-theme';
 
 export default function AppTabs() {
-  // Follow the in-app theme preference (not just the system scheme) so the
-  // native tab bar matches the rest of the UI when the user picks Light/Dark.
-  const systemScheme = useColorScheme();
-  const preference = useStore(settingsStore).theme;
-  const scheme = preference === 'system' ? systemScheme : preference;
-  const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
+  // useTheme resolves mode (system/light/dark) AND palette, so the native
+  // tab bar matches the rest of the UI for every theme combination.
+  const colors = useTheme();
 
   return (
     <NativeTabs

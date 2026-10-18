@@ -3,6 +3,7 @@ import * as Device from 'expo-device';
 import { Paths } from 'expo-file-system';
 import { router } from 'expo-router';
 import { BuildInfo } from 'llama.rn';
+import { Smartphone } from 'lucide-react-native';
 import { useState } from 'react';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -23,13 +24,20 @@ import {
   settingsStore,
   updateSettings,
 } from '@/settings/settingsRepository';
-import { ThemeSetting } from '@/types';
+import { ColorPalette, ThemeSetting } from '@/types';
 
 const CONTEXT_SIZES = [1024, 2048, 4096] as const;
 const MAX_TOKEN_CHOICES = [128, 256, 512, 1024] as const;
 const TOP_K_CHOICES = [20, 40, 64, 128] as const;
 const IMAGE_TOKEN_CHOICES = [256, 512, 1024, 2048] as const;
 const THEME_CHOICES = ['system', 'light', 'dark'] as const;
+const PALETTE_CHOICES: readonly ColorPalette[] = [
+  'emerald',
+  'indigo',
+  'ocean',
+  'rose',
+  'amber',
+];
 
 export default function SettingsScreen() {
   const theme = useTheme();
@@ -47,6 +55,10 @@ export default function SettingsScreen() {
     model.status === 'loaded' &&
     model.loadedContextSize !== null &&
     model.loadedContextSize !== settings.contextSize;
+  const deviceLabel =
+    Device.manufacturer && Device.modelName
+      ? `${Device.manufacturer} ${Device.modelName}`
+      : (Device.modelName ?? 'Unknown device');
 
   const savePrompt = () => {
     updateSettings({ systemPrompt: systemPrompt.trim() || DEFAULT_SETTINGS.systemPrompt });
@@ -111,6 +123,40 @@ export default function SettingsScreen() {
         <ThemedText type="subtitle" style={styles.screenTitle}>
           Settings
         </ThemedText>
+         {/* Device profile */}
+        <Section title="">
+          <ThemedView type="backgroundElement" style={styles.card}>
+            <View style={styles.profileRow}>
+              <View style={[styles.avatar, { backgroundColor: theme.accent }]}>
+                <Smartphone size={26} color={theme.accentText} />
+              </View>
+              <View style={styles.flex}>
+                <ThemedText type="smallBold" numberOfLines={1}>
+                  {Device.deviceName ?? deviceLabel}
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                  {deviceLabel}
+                  {Device.isDevice ? '' : ' · Emulator / simulator'}
+                </ThemedText>
+              </View>
+            </View>
+            <SpecRow
+              label="Operating system"
+              value={`${Device.osName ?? Platform.OS} ${Device.osVersion ?? ''}`.trim()}
+            />
+            <SpecRow
+              label="RAM"
+              value={Device.totalMemory ? formatBytes(Device.totalMemory) : 'Unknown'}
+            />
+            <SpecRow label="Free storage" value={formatBytes(Paths.availableDiskSpace)} />
+            
+            <ThemedText type="small" themeColor="textSecondary">
+              Models load into RAM — the larger 4B–7B entries want most of an 8 GB
+              device to themselves. Free storage is the space model downloads can use.
+            </ThemedText>
+            {/* ponytail: CPU core count needs react-native-device-info — add when asked. */}
+          </ThemedView>
+        </Section>
 
          {/* Appearance */}
         <Section title="Appearance">
@@ -122,6 +168,13 @@ export default function SettingsScreen() {
             }
             labelFor={(v) => (v === 'system' ? 'System' : v === 'light' ? 'Light' : 'Dark')}
             accessibilityLabel="Appearance"
+          />
+          <Segmented
+            options={PALETTE_CHOICES}
+            value={settings.palette}
+            onChange={(palette) => updateSettings({ palette })}
+            labelFor={(v) => v.charAt(0).toUpperCase() + v.slice(1)}
+            accessibilityLabel="Color theme"
           />
         </Section>
 
@@ -356,29 +409,7 @@ export default function SettingsScreen() {
 
        
 
-        {/* Device capability */}
-        <Section title="Device capability">
-          <ThemedView type="backgroundElement" style={styles.card}>
-            <ThemedText type="smallBold">
-              {Device.manufacturer && Device.modelName
-                ? `${Device.manufacturer} ${Device.modelName}`
-                : (Device.modelName ?? 'Unknown device')}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              {Platform.OS === 'ios' ? 'iOS' : 'Android'} {Device.osVersion ?? ''} ·{' '}
-              {Device.isDevice ? 'Physical device' : 'Emulator / simulator'}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              RAM {Device.totalMemory ? formatBytes(Device.totalMemory) : 'unknown'} ·
-              Free storage {formatBytes(Paths.availableDiskSpace)}
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              Models load into RAM — the larger 4B–7B entries want most of an 8 GB
-              device to themselves. Free storage is the space model downloads can use.
-            </ThemedText>
-            {/* ponytail: CPU core count needs react-native-device-info — add when asked. */}
-          </ThemedView>
-        </Section>
+       
 
         {/* About */}
         <Section title="About">
@@ -414,6 +445,19 @@ function Section({ title, children }: { title: string; children: React.ReactNode
         {title.toUpperCase()}
       </ThemedText>
       {children}
+    </View>
+  );
+}
+
+function SpecRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.specRow}>
+      <ThemedText type="small" themeColor="textSecondary" style={styles.flex}>
+        {label}
+      </ThemedText>
+      <ThemedText type="small" style={{ fontWeight: '600' }}>
+        {value}
+      </ThemedText>
     </View>
   );
 }
@@ -496,13 +540,33 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   screenTitle: { fontSize: 28, lineHeight: 34 },
-  section: { gap: Spacing.two },
+  section: { gap: Spacing.one },
   sectionTitle: { letterSpacing: 0.6, fontSize: 12 },
   field: { gap: Spacing.one },
   card: {
     borderRadius: Spacing.three,
     padding: Spacing.three,
     gap: Spacing.two,
+  },
+  profileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    marginBottom: Spacing.one,
+  },
+  avatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  specRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Spacing.three,
+    paddingVertical: Spacing.one,
   },
   inlineNote: {
     flexDirection: 'row',

@@ -639,7 +639,7 @@ function Bubble({
           </ThemedText>
         ) : isUser ? (
           <>
-            <ThemedText type="default" style={{ color: theme.accentText }}>
+            <ThemedText type="default" style={{ color: theme.userBubbleText }}>
               {message.content}
               {message.pending ? ' ▍' : ''}
             </ThemedText>

@@ -57,6 +57,9 @@ ok(sanitize({ imageMaxTokens: 300 }).imageMaxTokens === 1024, 'non-choice imageM
 ok(sanitize({ systemPrompt: 'x'.repeat(4000) }).systemPrompt === DEFAULT_SETTINGS.systemPrompt, 'oversized prompt dropped');
 ok(sanitize({ theme: 'purple' }).theme === 'system', 'unknown theme dropped');
 ok(sanitize({ theme: 'dark' }).theme === 'dark', 'valid theme kept');
+ok(sanitize({ palette: 'indigo' }).palette === 'indigo', 'valid palette kept');
+ok(sanitize({ palette: 'neon' }).palette === 'emerald', 'unknown palette dropped');
+ok(sanitize(DEFAULT_SETTINGS).palette === 'emerald', 'default palette emerald');
 
 // --- chat title rule (first user message -> history label) ---
 ok(titleFromFirstMessage('hello world') === 'hello world', 'short title kept');

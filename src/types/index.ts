@@ -57,6 +57,9 @@ export type Attachment =
 
 export type ThemeSetting = 'system' | 'light' | 'dark';
 
+/** Named palette from PALETTES in constants/theme.ts (keep lists in sync). */
+export type ColorPalette = 'emerald' | 'indigo' | 'ocean' | 'rose' | 'amber';
+
 export interface AppSettings {
   contextSize: 1024 | 2048 | 4096;
   maxTokens: number;
@@ -68,6 +71,8 @@ export interface AppSettings {
   imageMaxTokens: 256 | 512 | 1024 | 2048;
   systemPrompt: string;
   theme: ThemeSetting;
+  /** Color palette applied in the current mode (light/dark variant). */
+  palette: ColorPalette;
   /** Server API keys (empty = auth disabled). Clients send one as `Authorization: Bearer …` or `x-api-key`. */
   apiServerKeys: string[];
 }
