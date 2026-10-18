@@ -30,6 +30,10 @@ export default function AppTabs() {
         <NativeTabs.Trigger.Label>Models</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="arrow.down.circle.fill" md="download" />
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="server">
+        <NativeTabs.Trigger.Label>Server</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="network" md="lan" />
+      </NativeTabs.Trigger>
       <NativeTabs.Trigger name="settings">
         <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="gearshape.fill" md="settings" />

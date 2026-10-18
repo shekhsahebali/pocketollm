@@ -68,6 +68,8 @@ export interface AppSettings {
   imageMaxTokens: 256 | 512 | 1024 | 2048;
   systemPrompt: string;
   theme: ThemeSetting;
+  /** Server API keys (empty = auth disabled). Clients send one as `Authorization: Bearer …` or `x-api-key`. */
+  apiServerKeys: string[];
 }
 
 export interface StoredModel {

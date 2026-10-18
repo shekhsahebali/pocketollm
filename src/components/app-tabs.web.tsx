@@ -25,6 +25,9 @@ export default function AppTabs() {
           <TabTrigger name="models" href="/models" asChild>
             <TabButton>Models</TabButton>
           </TabTrigger>
+          <TabTrigger name="server" href="/server" asChild>
+            <TabButton>Server</TabButton>
+          </TabTrigger>
           <TabTrigger name="settings" href="/settings" asChild>
             <TabButton>Settings</TabButton>
           </TabTrigger>

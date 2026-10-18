@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   systemPrompt:
     'You are a helpful, concise assistant running entirely on the user\'s phone.',
   theme: 'system',
+  apiServerKeys: [],
 };
 
 const CONTEXT_SIZES = [1024, 2048, 4096];
@@ -53,6 +54,25 @@ export function sanitize(raw: unknown): AppSettings {
   }
   if (r.theme === 'system' || r.theme === 'light' || r.theme === 'dark') {
     out.theme = r.theme;
+  }
+  out.apiServerKeys = sanitizeApiKeys(r);
+  return out;
+}
+
+const MAX_API_KEYS = 8;
+
+/** Valid, de-duplicated key list; migrates the pre-multi-key `apiServerKey` field. */
+function sanitizeApiKeys(r: Record<string, unknown>): string[] {
+  const list: unknown[] = Array.isArray(r.apiServerKeys) ? [...r.apiServerKeys] : [];
+  // legacy single-key format from before multi-key support
+  if (typeof r.apiServerKey === 'string' && r.apiServerKey) list.unshift(r.apiServerKey);
+  const out: string[] = [];
+  for (const k of list) {
+    if (typeof k !== 'string') continue;
+    const key = k.trim();
+    if (key.length < 8 || key.length > 120) continue;
+    if (!out.includes(key)) out.push(key);
+    if (out.length >= MAX_API_KEYS) break;
   }
   return out;
 }

@@ -178,7 +178,7 @@ export default function ModelsScreen() {
                         </ThemedText>
                       </View>
                       <View style={styles.tagRow}>
-                        {entry.vision && <Tag label="Vision" color={theme.accent} />}
+                        {entry.vision && <Eye size={20} color={theme.accent} />}
                         {isActive &&  <DatabaseCheck size={20} color={theme.success} />}
                       </View>
                     </View>
