@@ -161,6 +161,7 @@ export const MODEL_CATALOG: ModelEntry[] = [
     quant: 'Q4_K_M',
     description:
       'Newest Qwen generation with built-in reasoning. Strong quality for its size and memory.',
+    thinking: true,
   },
   {
     id: 'gemma-3-4b-it-q4_k_m',

@@ -26,7 +26,6 @@
       "predictiveBackGestureEnabled": true
     },
     "web": {
-      "output": "server",
       "favicon": "./assets/img/icon.png"
     },
     "plugins": [
@@ -45,7 +44,10 @@
         {
           "enableOpenCLAndHexagon": false
         }
-      ]
+      ],
+      "expo-font",
+      "expo-image",
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -3,26 +3,28 @@ import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import * as Speech from 'expo-speech';
 import { router } from 'expo-router';
+import * as Speech from 'expo-speech';
 import {
-  AlertCircle,
   Bot,
+  Brain,
   Camera,
   Copy,
   FileText,
+  Globe,
   Image as ImageIcon,
   Menu,
   MessageSquare,
   Pencil,
   Plus,
   RefreshCw,
+  Send,
   SendHorizontal,
   Square,
   SquarePen,
   Trash2,
   Volume2,
-  X,
+  X
 } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -60,6 +62,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useStore } from '@/hooks/use-store';
 import { useTheme } from '@/hooks/use-theme';
+import { getModelEntry } from '@/models/catalog';
 import { Attachment, ChatMessage, Conversation } from '@/types';
 
 const SIDEBAR_WIDTH = 200;
@@ -77,6 +80,8 @@ export default function ChatScreen() {
   const [editingId, setEditingId] = useState<string | null>(null);
   // Custom dropdown over the + button (native Alert can't be themed).
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [thinkingMode, setThinkingMode] = useState(false);
   // Slides in from the left; starts off-screen. Native driver for 60fps.
   // Lazy useState instead of useRef: Animated.Value is render-stable state,
   // and reading ref.current during render trips react-hooks/refs.
@@ -230,6 +235,27 @@ export default function ChatScreen() {
     { icon: FileText, label: 'File', run: () => void pickFile() },
   ];
 
+  const moreOptions = [
+    {
+      icon: Globe,
+      label: 'Web',
+      active: webSearchEnabled,
+      run: () => {
+        setWebSearchEnabled((v) => !v);
+
+      },
+    },
+    {
+      icon: Brain,
+      label: 'Thinking',
+      active: thinkingMode,
+      run: () => {
+        setThinkingMode((v) => !v);
+      },
+    },
+
+  ];
+
   const onDeleteConversation = (conv: Conversation) => {
     if (sending) return;
     Alert.alert('Delete conversation?', `"${conv.title}" will be removed permanently.`, [
@@ -313,16 +339,24 @@ export default function ChatScreen() {
             <ThemedText type="smallBold" style={styles.appTitle}>
               PocketOllm
             </ThemedText>
-           
-          
+            <View style={{ position: 'relative', left: 50, top: 0, bottom: 0, justifyContent: 'center', paddingRight: Spacing.two }}>
+              {chatMode === 'chat' ? 
+              <ThemedText type="link" themeColor="accent">
+            Chat
+          </ThemedText> : <ThemedText type="link" themeColor="accent">
+            Agentic
+          </ThemedText> }
+        </View>
+
+
           </View>
           <View style={styles.headerActions}>
             <Pressable
-              onPress={() => setChatMode(chatMode === 'chat' ? 'agentic' : 'chat')}
+              disabled
               hitSlop={8}
-              style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
-              accessibilityLabel="Toggle chat mode">
-              {chatMode === 'agentic' ? <Bot size={20} color={theme.accent} /> : <MessageSquare size={20} color={theme.textSecondary} />}
+              style={styles.headerButton}
+              accessibilityLabel="Chat mode">
+              <MessageSquare size={20} color={theme.textSecondary} />
             </Pressable>
             <Pressable
               onPress={() => {
@@ -333,21 +367,13 @@ export default function ChatScreen() {
               hitSlop={8}
               style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}>
               <ThemedText type="small" themeColor="accent">
-               <SquarePen size={20} color={theme.accent} />
+                <SquarePen size={20} color={theme.accent} />
               </ThemedText>
             </Pressable>
           </View>
         </View>
 
-        <View style={[styles.modeBar, { borderBottomColor: theme.border, backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="small" themeColor={chatMode === 'chat' ? 'accent' : 'textSecondary'}>
-              Chat
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">·</ThemedText>
-            <ThemedText type="small" themeColor={chatMode === 'agentic' ? 'accent' : 'textSecondary'}>
-              Agentic
-            </ThemedText>
-        </View>
+        
 
         {/* No-model banner with navigation to Models */}
         {!modelLoaded && (
@@ -421,7 +447,7 @@ export default function ChatScreen() {
               <Bubble
                 message={item}
                 isUser={item.role === 'user'}
-                onLongPress={() => {}}
+                onLongPress={() => { }}
                 onEdit={item.role === 'user' ? () => startEdit(item) : undefined}
                 onCopy={() => void Clipboard.setStringAsync(item.content)}
                 onSpeak={() => Speech.speak(item.content.replace(/```[\s\S]*?```/g, ''))}
@@ -466,7 +492,7 @@ export default function ChatScreen() {
                 hitSlop={8}
                 accessibilityLabel="Remove attachment">
                 <ThemedText type="small" themeColor="textSecondary">
-                  <AlertCircle size={20} />
+                  <X size={20} />
                 </ThemedText>
               </Pressable>
             </View>
@@ -498,84 +524,195 @@ export default function ChatScreen() {
               })}
             </View>
           )}
-          <View
-            style={[
-              styles.composer,
-              {
-                backgroundColor: theme.backgroundElement,
-                borderColor: theme.border,
-              },
-            ]}>
-            <Pressable
-              onPress={() => setAttachMenuOpen((v) => !v)}
-              disabled={!modelLoaded || sending || editingId !== null}
-              style={({ pressed }) => [
-                styles.attachButton,
-                {
-                  opacity:
-                    !modelLoaded || sending || editingId !== null ? 0.45 : pressed ? 0.6 : 1,
-                },
-              ]}
-              accessibilityLabel="Attach photo or file">
-              <ThemedText type="smallBold" themeColor="text">
-                {attachMenuOpen ? (
-                  <X size={20} color={theme.text} />
-                ) : (
-                  <Plus size={20} color={theme.text} />
-                )}
-              </ThemedText>
-            </Pressable>
-            <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              placeholder={
-                editingId ? 'Edited message' : modelLoaded ? 'Message' : 'Select a model to chat'
-              }
-              placeholderTextColor={theme.textSecondary}
-              multiline
-              editable={modelLoaded && !sending}
+
+          {chatMode === 'chat' ? (
+            <View
               style={[
-                styles.input,
+                styles.composer,
                 {
-                  color: theme.text,
+                  backgroundColor: theme.backgroundElement,
+                  borderColor: theme.border,
+                  alignItems: 'center',
+                  flexDirection: 'row',
+                  borderRadius: 28,
                 },
-              ]}
-              maxLength={8000}
-              accessibilityLabel="Message input"
-            />
-            {sending ? (
+              ]}>
               <Pressable
-                onPress={stopStreaming}
+                onPress={() => setAttachMenuOpen((v) => !v)}
+                disabled={!modelLoaded || sending || editingId !== null}
                 style={({ pressed }) => [
-                  styles.sendButton,
-                  { backgroundColor: theme.danger },
-                  pressed && styles.pressed,
-                ]}
-                accessibilityLabel="Stop generation">
-                <ThemedText type="smallBold" style={{ color: '#fff' }}>
-                  <Square size={18} color="#fff" />
-                </ThemedText>
-              </Pressable>
-            ) : (
-              <Pressable
-                onPress={onSend}
-                disabled={!canSend}
-                style={({ pressed }) => [
-                  styles.sendButton,
+                  styles.attachButton,
                   {
-                    backgroundColor: canSend ? theme.accent : theme.backgroundSelected,
-                    opacity: canSend && !pressed ? 1 : 0.8,
+                    opacity:
+                      !modelLoaded || sending || editingId !== null ? 0.45 : pressed ? 0.6 : 1,
                   },
                 ]}
-                accessibilityLabel="Send message">
-                <ThemedText
-                  type="smallBold"
-                  style={{ color: canSend ? theme.accentText : theme.textSecondary }}>
-                  <SendHorizontal size={18} color={canSend ? theme.accentText : theme.textSecondary} />
-                </ThemedText>
+                accessibilityLabel="Attach photo or file">
+                <Plus size={20} color={theme.text} />
               </Pressable>
-            )}
-          </View>
+              <TextInput
+                value={draft}
+                onChangeText={setDraft}
+                placeholder={
+                  editingId
+                    ? 'Edited message'
+                    : modelLoaded
+                      ? 'Message'
+                      : 'Select a model to chat'
+                }
+                placeholderTextColor={theme.textSecondary}
+                multiline
+                editable={modelLoaded && !sending}
+                style={[
+                  styles.input,
+                  {
+                    color: theme.text,
+                    flex: 1,
+                  },
+                ]}
+                maxLength={8000}
+                accessibilityLabel="Message input"
+              />
+              {sending ? (
+                <Pressable
+                  onPress={stopStreaming}
+                  style={({ pressed }) => [
+                    styles.sendButton,
+                    { backgroundColor: theme.danger },
+                    pressed && styles.pressed,
+                  ]}
+                  accessibilityLabel="Stop generation">
+                  <Square size={18} color="#fff" />
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={onSend}
+                  disabled={!canSend}
+                  style={({ pressed }) => [
+                    styles.sendButton,
+                    {
+                      backgroundColor: canSend ? theme.accent : theme.backgroundSelected,
+                      opacity: canSend && !pressed ? 1 : 0.8,
+                    },
+                  ]}
+                  accessibilityLabel="Send message">
+                  <SendHorizontal size={18} color={canSend ? theme.accentText : theme.textSecondary} />
+                </Pressable>
+              )}
+            </View>
+          ) : (
+            <View
+              style={[
+                styles.composer,
+                {
+                  backgroundColor: theme.backgroundElement,
+                  borderColor: theme.border,
+                  minHeight: 52,
+                  paddingVertical: Spacing.one,
+                  alignItems: 'flex-start',
+                  flexDirection: 'column',
+                  borderRadius: 24,
+                },
+              ]}>
+              <TextInput
+                value={draft}
+                onChangeText={setDraft}
+                placeholder={
+                  editingId
+                    ? 'Edited message'
+                    : modelLoaded
+                      ? 'Ask anything...'
+                      : 'Select a model to chat'
+                }
+                placeholderTextColor={theme.textSecondary}
+                multiline
+                editable={modelLoaded && !sending}
+                style={[
+                  styles.input,
+                  {
+                    color: theme.text,
+                    minHeight: 60,
+                    maxHeight: 180,
+                    paddingHorizontal: Spacing.three,
+                    paddingTop: Spacing.two,
+                    paddingBottom: Spacing.one,
+                    width: '100%',
+                  },
+                ]}
+                maxLength={8000}
+                accessibilityLabel="Message input"
+              />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: Spacing.two, paddingBottom: Spacing.one, width: '100%' }}>
+                <Pressable
+                  onPress={() => setAttachMenuOpen((v) => !v)}
+                  disabled={!modelLoaded || sending || editingId !== null}
+                  style={({ pressed }) => [
+                    styles.attachButton,
+                    {
+                      opacity:
+                        !modelLoaded || sending || editingId !== null ? 0.45 : pressed ? 0.6 : 1,
+                    },
+                  ]}
+                  accessibilityLabel="Attach photo or file">
+                  <Plus size={20} color={theme.text} />
+                </Pressable>
+          {chatMode === 'agentic' && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginHorizontal: Spacing.three, marginTop: Spacing.one }}>
+              {moreOptions
+                .filter((opt) => opt.label !== 'Thinking Mode' || getModelEntry(model.model?.id || '')?.thinking)
+                .map((opt) => {
+                  const Icon = opt.icon;
+                  return (
+                    <Pressable
+                      key={opt.label}
+                      onPress={opt.run}
+                      style={({ pressed }) => [
+                        { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: opt.active ? theme.accent : theme.border, backgroundColor: opt.active ? theme.backgroundSelected : theme.backgroundElement },
+                        pressed && { opacity: 0.7 },
+                      ]}>
+                      <Icon size={14} color={opt.active ? theme.accent : theme.textSecondary} />
+                      <ThemedText type="small" style={{ color: opt.active ? theme.accent : theme.textSecondary }}>
+                        {opt.label}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })}
+            </View>
+          )}
+              <View style={{ flex: 1 }} />
+              {sending ? (
+                <Pressable
+                  onPress={stopStreaming}
+                  style={({ pressed }) => [
+                    styles.sendButton,
+                    { backgroundColor: theme.danger },
+                    pressed && styles.pressed,
+                  ]}
+                  accessibilityLabel="Stop generation">
+                  <Square size={18} color="#fff" />
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={onSend}
+                  disabled={!canSend}
+                  style={({ pressed }) => [
+                    styles.sendButton,
+                    {
+                      backgroundColor: canSend ? theme.accent : theme.backgroundSelected,
+                      opacity: canSend && !pressed ? 1 : 0.8,
+                    },
+                  ]}
+                  accessibilityLabel="Send message">
+                  {chatMode === 'agentic' ? (
+                    <Send size={18} color={canSend ? theme.accentText : theme.textSecondary} />
+                  ) : (
+                    <SendHorizontal size={18} color={canSend ? theme.accentText : theme.textSecondary} />
+                  )}
+                </Pressable>
+              )}
+              </View>
+            </View>
+          )}
         </View>
         {/* <View style={{ height: BottomTabInset, backgroundColor: theme.background }} /> */}
       </KeyboardAvoidingView>
@@ -610,7 +747,7 @@ export default function ChatScreen() {
                 hitSlop={8}
                 style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}>
                 <ThemedText type="small" themeColor="accent">
-                   <SquarePen size={20} color={theme.accent} />
+                  <SquarePen size={20} color={theme.accent} />
                 </ThemedText>
               </Pressable>
             </View>
@@ -634,17 +771,18 @@ export default function ChatScreen() {
                         closeSidebar();
                         setEditingId(null);
                         setDraft('');
-                        void openConversation(conv.id);
-                      }}
-                      style={styles.flex}
-                      accessibilityLabel={`Open ${conv.title}`}>
-                      <ThemedText type="small" numberOfLines={1}>
-                        {conv.title}
-                      </ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {conv.messages.length} messages
-                      </ThemedText>
-                    </Pressable>
+                      if (conv.chatMode) setChatMode(conv.chatMode);
+                      void openConversation(conv.id);
+                    }}
+                    style={styles.flex}
+                    accessibilityLabel={`Open ${conv.title}`}>
+                    <ThemedText type="small" numberOfLines={1}>
+                      {conv.title}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {conv.chatMode === 'agentic' ? 'Agentic' : 'Chat'} · {conv.messages.length} messages
+                    </ThemedText>
+                  </Pressable>
                     <Pressable
                       onPress={() => onDeleteConversation(conv)}
                       hitSlop={10}
@@ -659,7 +797,7 @@ export default function ChatScreen() {
                 ))}
               </ScrollView>
             )}
-           
+
           </Animated.View>
         </>
       )}
@@ -699,7 +837,7 @@ function Bubble({
     return () => {
       try {
         Speech.stop();
-      } catch {}
+      } catch { }
     };
   }, []);
 
@@ -707,7 +845,7 @@ function Bubble({
     if (speaking) {
       try {
         Speech.stop();
-      } catch {}
+      } catch { }
       setSpeaking(false);
       return;
     }
@@ -975,15 +1113,15 @@ const styles = StyleSheet.create({
   },
   composer: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.three,
+    alignItems: 'flex-end',
+    paddingHorizontal: Spacing.one,
     paddingVertical: Spacing.one,
     marginHorizontal: Spacing.three,
     marginTop: Spacing.two,
     marginBottom: Spacing.two,
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 28,
-    gap: Spacing.one,
+    borderRadius: 26,
+    gap: 2,
   },
   attachButton: {
     minHeight: 36,
@@ -993,11 +1131,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
   },
   input: {
-    flex: 1,
-    minHeight: 38,
-    maxHeight: 120,
-    paddingHorizontal: Spacing.one,
-    paddingVertical: Spacing.one,
+    minHeight: 40,
+    maxHeight: 160,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: 8,
     fontSize: 16,
   },
   sendButton: {
@@ -1048,5 +1185,5 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.one,
   },
   editPen: { position: 'absolute', right: Spacing.two, bottom: 0 },
-  editPenIcon: { opacity: 1,},
+  editPenIcon: { opacity: 1, },
 });

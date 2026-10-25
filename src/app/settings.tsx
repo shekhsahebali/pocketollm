@@ -3,6 +3,7 @@ import * as Device from 'expo-device';
 import { Paths } from 'expo-file-system';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { router } from 'expo-router';
+import { ChevronRight } from 'lucide-react-native';
 import { BuildInfo } from 'llama.rn';
 import { Smartphone } from 'lucide-react-native';
 import { useState } from 'react';

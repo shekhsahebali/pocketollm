@@ -67,6 +67,10 @@ export async function newChat(): Promise<void> {
   if (current && current.messages.length === 0) return;
   const conv = await createConversation(null);
   patch({ conversation: conv, error: null });
+  const mode = chatStore.get().chatMode;
+  const updated: Conversation = { ...conv, chatMode: mode };
+  patch({ conversation: updated });
+  void saveConversation(updated);
 }
 
 export async function openConversation(id: string): Promise<void> {
@@ -132,9 +136,10 @@ function buildLlmMessages(conv: Conversation): LlmMessage[] {
     return { role: m.role as any, content: m.content } as LlmMessage;
   });
 
+  const chatModeState = chatStore.get().chatMode;
   const system =
     chatMode === 'agentic'
-      ? `${systemPrompt}\n\nYou have access to tools. When needed, call tools using function calling format. Available tools: calculator (expression), get_time (timezone), web_search (query).`
+      ? `${systemPrompt}\n\nYou are an agentic assistant. For questions about current events, live data, or recent information, call web_search. Output ONLY JSON when calling tools: {"tool_calls":[{"name":"web_search","arguments":{"query":"..."}}]}. Otherwise answer in plain text. Tools: calculator(expression), get_time(timezone), web_search(query), open_url(url).`
       : systemPrompt;
   return [{ role: 'system', content: system }, ...messages];
 }
@@ -277,20 +282,74 @@ async function runTurn(conv: Conversation, assistantMsgId: string): Promise<void
     let finalText = outcome.text || acc || '(no response)';
     const current = chatStore.get().conversation;
 
+    // If last messages already include tool results, don't call tools again
+    if (chatMode === 'agentic' && current) {
+      const msgs = current.messages;
+      const aIdx = msgs.findIndex((m) => m.id === assistantMsgId);
+      const hasToolAfter = aIdx >= 0 && msgs.slice(aIdx).some((m) => m.role === 'tool');
+      if (hasToolAfter) {
+        try {
+          const toolMsgs = msgs.filter((m) => m.role === 'tool').slice(-6);
+          const summaryPrompt: LlmMessage[] = [
+            { role: 'system', content: 'Answer directly and concisely using only the tool results. Do not output JSON or call tools.' },
+            ...toolMsgs.map((m) => ({ role: 'user' as any, content: `[${m.toolName}] ${m.content}` })),
+            { role: 'user', content: 'Give the final answer.' },
+          ];
+          const sum = await runCompletion(summaryPrompt, { nPredict: maxTokens, temperature, topP, topK, repeatPenalty }, () => {});
+          const sumText = (sum.text || '').replace(/```json[\s\S]*```/g, '').trim();
+          if (sumText) finalText = sumText;
+        } catch {}
+      }
+    }
+
     if (chatMode === 'agentic' && current) {
       try {
-        const jsonMatch = finalText.match(/```json\s*([\s\S]*?)```/) || finalText.match(/\{[\s\S]*"tool_calls"[\s\S]*\}/);
+        let jsonMatch = finalText.match(/```json\s*([\s\S]*?)```/) || finalText.match(/\{[\s\S]*"tool_calls"[\s\S]*\}/);
+        if (!jsonMatch) {
+          jsonMatch = finalText.match(/"tool_calls"\s*:\s*\[([\s\S]*?)\]/);
+        }
         if (jsonMatch) {
           const raw = jsonMatch[1] || jsonMatch[0];
-          const parsed = JSON.parse(raw);
-          const toolCalls = parsed.tool_calls || parsed.tools || [];
+          let parsed: any;
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            const wrapped = raw.includes('"tool_calls"') ? `{${raw}}` : `{"tool_calls":${raw}}`;
+            parsed = JSON.parse(wrapped);
+          }
+          let toolCalls = parsed.tool_calls || parsed.tools || [];
+          if (Array.isArray(toolCalls)) {
+            toolCalls = toolCalls.map((tc: any) => {
+              if (Array.isArray(tc)) {
+                return { name: tc[0], arguments: typeof tc[1] === 'string' ? (tc[2] ? JSON.stringify({ query: tc[1] }) : JSON.stringify(tc[1])) : JSON.stringify(tc[1] || {}) };
+              }
+              if (tc.name && tc.arguments) return tc;
+              if (tc.function) return { name: tc.function.name, arguments: tc.function.arguments };
+              return tc;
+            });
+          }
           if (Array.isArray(toolCalls) && toolCalls.length > 0) {
             const calls = toolCalls
-              .map((tc: any, idx: number) => ({
-                id: `call_${Date.now()}_${idx}`,
-                name: tc.name || tc.function?.name || '',
-                arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || tc.function?.arguments || {}),
-              }))
+              .map((tc: any, idx: number) => {
+                let name = tc.name || tc.function?.name || tc.tool || tc.type || '';
+                let args = tc.arguments || tc.params || tc.input || tc.args || {};
+                if (Array.isArray(tc)) {
+                  name = tc[0];
+                  args = tc[1];
+                }
+                if (name === 'web_search' && typeof args === 'string') {
+                  args = { query: args };
+                }
+                if (name === 'web_search' && args && !args.query && !args.q) {
+                  const first = Object.values(args)[0];
+                  if (typeof first === 'string') args = { query: first };
+                }
+                return {
+                  id: `call_${Date.now()}_${idx}`,
+                  name,
+                  arguments: typeof args === 'string' ? args : JSON.stringify(args || {}),
+                };
+              })
               .filter((c: any) => c.name);
             if (calls.length > 0) {
               replaceAssistant(finalText, { toolCalls: calls, pending: false });
@@ -309,10 +368,35 @@ async function runTurn(conv: Conversation, assistantMsgId: string): Promise<void
                     const args = JSON.parse(call.arguments || '{}');
                     const tz = args.timezone || args.tz || 'UTC';
                     result = new Date().toLocaleString('en-US', { timeZone: tz });
-                  } else if (call.name === 'web_search') {
-                    const args = JSON.parse(call.arguments || '{}');
-                    result = `Web search results for: ${args.query || ''} (search disabled in offline mode)`;
-                  } else {
+                } else if (call.name === 'web_search' || call.name === 'search') {
+                  const args = JSON.parse(call.arguments || '{}');
+                  const q = args.query || args.q || args.search || '';
+                  try {
+                    const res = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_redirect=1&no_html=1`);
+                    const data = await res.json();
+                    const items: string[] = [];
+                    if (data.AbstractText) {
+                      items.push(`Abstract: ${data.AbstractText}${data.AbstractURL ? '\n' + data.AbstractURL : ''}`);
+                    }
+                    if (Array.isArray(data.RelatedTopics)) {
+                      for (const t of data.RelatedTopics) {
+                        if (t.Text) items.push(`- ${t.Text}${t.FirstURL ? '\n  ' + t.FirstURL : ''}`);
+                        if (t.Topics) {
+                          for (const st of t.Topics.slice(0, 3)) {
+                            if (st.Text) items.push(`- ${st.Text}${st.FirstURL ? '\n  ' + st.FirstURL : ''}`);
+                          }
+                        }
+                        if (items.length >= 8) break;
+                      }
+                    }
+                    result = items.length ? items.join('\n\n') : `No results for: ${q}`;
+                  } catch (e) {
+                    result = `Search failed: ${e instanceof Error ? e.message : String(e)}`;
+                  }
+                } else if (call.name === 'open_url') {
+                  const args = JSON.parse(call.arguments || '{}');
+                  result = `URL: ${args.url || args.link || ''}`;
+                } else {
                     result = `Unknown tool: ${call.name}`;
                   }
                 } catch (err) {
@@ -340,6 +424,7 @@ async function runTurn(conv: Conversation, assistantMsgId: string): Promise<void
               };
               const convFinal: Conversation = { ...convWithTools, messages: [...convWithTools.messages, nextAssistant] };
               patch({ conversation: convFinal });
+              // Run once to get final answer, but if it tries tools again skip
               await runTurn(convFinal, nextAssistant.id);
               return;
             }

@@ -31,6 +31,7 @@ export interface Conversation {
   modelId: string | null;
   createdAt: number;
   updatedAt: number;
+  chatMode?: ChatMode;
 }
 
 export interface ModelEntry {
@@ -52,6 +53,7 @@ export interface ModelEntry {
   description: string;
   /** Vision models ship a second file (the mmproj projector) that must also download. */
   vision?: boolean;
+  thinking?: boolean;
   mmproj?: {
     filename: string;
     url: string;

@@ -2,11 +2,11 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { PixelRatio, Text, useColorScheme } from 'react-native';
+import { PixelRatio, useColorScheme } from 'react-native';
 
+import { initChatSession } from '@/chat/chatSession';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
-import { initChatSession } from '@/chat/chatSession';
 import { useStore } from '@/hooks/use-store';
 import { reconcileModels } from '@/models/storage';
 import { initSettings, settingsStore } from '@/settings/settingsRepository';
