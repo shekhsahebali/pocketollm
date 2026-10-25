@@ -17,7 +17,7 @@ import {
   SquarePen,
   X,
 } from 'lucide-react-native';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
@@ -31,7 +31,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { modelStore } from '@/ai/modelManager';
+import { clearNotification, modelStore } from '@/ai/modelManager';
 import { deleteConversation, listConversations } from '@/chat/chatRepository';
 import {
   chatStore,
@@ -70,10 +70,35 @@ export default function ChatScreen() {
   // Lazy useState instead of useRef: Animated.Value is render-stable state,
   // and reading ref.current during render trips react-hooks/refs.
   const [sidebarX] = useState(() => new Animated.Value(-SIDEBAR_WIDTH));
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     void initChatSession();
   }, []);
+
+  useEffect(() => {
+    if (model.notification) {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      Animated.timing(toastOpacity, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+      toastTimer.current = setTimeout(() => {
+        Animated.timing(toastOpacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }).start(() => clearNotification());
+      }, 2000);
+    } else {
+      toastOpacity.setValue(0);
+    }
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, [model.notification, toastOpacity]);
 
   // Newest at the top of an inverted list = visually newest at the bottom.
   const invertedMessages = useMemo(
@@ -222,6 +247,30 @@ export default function ChatScreen() {
 
   return (
     <ThemedView style={styles.flex}>
+      {model.notification && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.toast,
+            {
+              top: insets.top + Spacing.two,
+              backgroundColor: model.notification.type === 'success' ? theme.success : theme.accent,
+              opacity: toastOpacity,
+              transform: [
+                {
+                  translateY: toastOpacity.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-10, 0],
+                  }),
+                },
+              ],
+            },
+          ]}>
+          <ThemedText type="smallBold" style={{ color: '#fff' }}>
+            {model.notification.text}
+          </ThemedText>
+        </Animated.View>
+      )}
       <KeyboardAvoidingView
         style={styles.flex}
         // ponytail: edge-to-edge (RN 0.88 default) leaves the Android IME
@@ -666,6 +715,14 @@ function Bubble({
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  toast: {
+    position: 'absolute',
+    alignSelf: 'center',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.four,
+    zIndex: 100,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

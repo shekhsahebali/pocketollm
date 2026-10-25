@@ -5,7 +5,7 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
 ## Get started
 
 1. Install dependencies
-
+claude --resume 0ec83db5-2f05-4305-9d00-f5ea7a3403fc
    ```bash
    npm install
    ```

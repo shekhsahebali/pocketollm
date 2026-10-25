@@ -14,6 +14,7 @@ import { clearAllChats } from '@/chat/chatSession';
 import { Segmented } from '@/components/segmented';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { Image } from 'expo-image';
 import { BottomTabInset, Spacing } from '@/constants/theme';
 import { useStore } from '@/hooks/use-store';
 import { useTheme } from '@/hooks/use-theme';
@@ -25,7 +26,7 @@ import {
   settingsStore,
   updateSettings,
 } from '@/settings/settingsRepository';
-import { ColorPalette, ThemeSetting } from '@/types';
+import { ColorPalette, GpuMode, ThemeSetting } from '@/types';
 
 const CONTEXT_SIZES = [1024, 2048, 4096] as const;
 const MAX_TOKEN_CHOICES = [128, 256, 512, 1024] as const;
@@ -114,7 +115,7 @@ export default function SettingsScreen() {
   // whether backgrounded apps may keep running long tasks.
   const requestBackgroundRunning = async () => {
     try {
-      const pkg = Constants.expoConfig?.android?.package ?? 'com.openpocket.app';
+      const pkg = Constants.expoConfig?.android?.package ?? 'com.pocketollm.app';
       await IntentLauncher.startActivityAsync(
         IntentLauncher.ActivityAction.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
         { data: `package:${pkg}` },
@@ -173,6 +174,54 @@ export default function SettingsScreen() {
               device to themselves. Free storage is the space model downloads can use.
             </ThemedText>
             {/* ponytail: CPU core count needs react-native-device-info — add when asked. */}
+          </ThemedView>
+        </Section>
+
+        <Section title="GPU Acceleration">
+          <ThemedView type="backgroundElement" style={styles.card}>
+            <Segmented<GpuMode>
+              options={['auto', 'gpu', 'cpu']}
+              value={settings.gpuMode}
+              onChange={(v) => updateSettings({ gpuMode: v })}
+              labelFor={(v) =>
+                v === 'auto' ? 'Auto' : v === 'gpu' ? 'GPU' : 'CPU'
+              }
+              accessibilityLabel="GPU acceleration mode"
+            />
+            <ThemedText type="small" themeColor="textSecondary">
+              {settings.gpuMode === 'auto'
+                ? 'Auto (Try GPU first, then CPU fallback)'
+                : settings.gpuMode === 'gpu'
+                  ? 'GPU (Maximum speed)'
+                  : 'CPU (Stable mode with lower speed)'}
+            </ThemedText>
+            {settings.gpuMode !== 'cpu' && (
+              <>
+                <View style={styles.specRow}>
+                  <ThemedText type="smallBold" style={styles.flex}>
+                    Number of layers to store in GPU memory
+                  </ThemedText>
+                  <View style={styles.stepperRow}>
+                    <Pressable
+                      onPress={() => updateSettings({ gpuLayers: Math.max(-1, settings.gpuLayers - 1) })}
+                      style={({ pressed }) => [styles.stepperButton, { backgroundColor: theme.backgroundSelected }, pressed && styles.pressed]}>
+                      <ThemedText type="small">-</ThemedText>
+                    </Pressable>
+                    <View style={[styles.stepperValue, { borderColor: theme.border }]}>
+                      <ThemedText type="small">{settings.gpuLayers === -1 ? 'All' : settings.gpuLayers}</ThemedText>
+                    </View>
+                    <Pressable
+                      onPress={() => updateSettings({ gpuLayers: Math.min(200, settings.gpuLayers + 1) })}
+                      style={({ pressed }) => [styles.stepperButton, { backgroundColor: theme.backgroundSelected }, pressed && styles.pressed]}>
+                      <ThemedText type="small">+</ThemedText>
+                    </Pressable>
+                  </View>
+                </View>
+                <ThemedText type="small" themeColor="textSecondary">
+                  -1 or "All" = offload all layers to GPU. Lower values use less VRAM.
+                </ThemedText>
+              </>
+            )}
           </ThemedView>
         </Section>
 
@@ -465,15 +514,28 @@ export default function SettingsScreen() {
         {/* About */}
         <Section title="About">
           <ThemedView type="backgroundElement" style={styles.card}>
-            <ThemedText type="small">
-              PocketOllm {Constants.expoConfig?.version ?? '1.0.0'}
-            </ThemedText>
+            <View style={styles.aboutHeader}>
+              <Image
+                source={require('../../assets/img/icon.png')}
+                style={styles.aboutIcon}
+                contentFit="contain"
+              />
+              <View style={styles.flex}>
+                <ThemedText type="smallBold">PocketOllm</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Version {Constants.expoConfig?.version ?? '1.0.5'}
+                </ThemedText>
+              </View>
+            </View>
             <ThemedText type="small" themeColor="textSecondary">
               llama.rn build {BuildInfo.number || 'unknown'}
               {BuildInfo.commit ? ` · ${BuildInfo.commit.slice(0, 10)}` : ''}
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
-              New Architecture · CPU inference · no analytics or telemetry
+              New Architecture · On-device inference · no analytics or telemetry
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Private, offline-first AI assistant running entirely on your device.
             </ThemedText>
             <Pressable
               onPress={resetAll}
@@ -674,5 +736,15 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  aboutHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  aboutIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: Spacing.two,
   },
 });

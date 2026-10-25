@@ -5,6 +5,7 @@ import {
   type NativeCompletionResult,
   type RNLlamaOAICompatibleMessage,
 } from 'llama.rn';
+import { settingsStore } from '@/settings/settingsRepository';
 
 export type LlmMessage = RNLlamaOAICompatibleMessage;
 
@@ -46,28 +47,61 @@ export async function createContext(
   onProgress?: (percent: number) => void,
   vision?: VisionConfig,
 ): Promise<CreatedContext> {
-  const context = await initLlama(
-    {
-      model: modelPath,
-      n_ctx: nCtx,
-      n_gpu_layers: 0, // CPU-first; GPU/NPU offload is not enabled in this build
-      // Multimodal prompts can exceed the context once image tokens are added;
-      // llama.rn docs require ctx_shift off for vision models.
-      ...(vision ? { ctx_shift: false } : {}),
-    },
-    onProgress,
-  );
-  if (!vision) return { context, visionOk: false };
+  const gpuMode = settingsStore.get().gpuMode ?? 'auto';
+  const gpuLayers = settingsStore.get().gpuLayers ?? -1;
+  let nGpuLayers = 0;
+  if (gpuMode === 'gpu') nGpuLayers = gpuLayers < 0 ? -1 : gpuLayers;
+  else if (gpuMode === 'auto') nGpuLayers = gpuLayers < 0 ? -1 : gpuLayers;
+  else nGpuLayers = 0;
+
   try {
-    const ok = await context.initMultimodal({
-      path: vision.mmprojPath,
-      use_gpu: false, // CPU-first build; projector runs on CPU like the LLM
-      image_max_tokens: vision.imageMaxTokens,
-    });
-    return { context, visionOk: ok };
-  } catch {
-    // Projector failed to load (e.g. unsupported arch) — degrade to text-only.
-    return { context, visionOk: false };
+    const context = await initLlama(
+      {
+        model: modelPath,
+        n_ctx: nCtx,
+        n_gpu_layers: nGpuLayers,
+        // Multimodal prompts can exceed the context once image tokens are added;
+        // llama.rn docs require ctx_shift off for vision models.
+        ...(vision ? { ctx_shift: false } : {}),
+      },
+      onProgress,
+    );
+    if (!vision) return { context, visionOk: false };
+    try {
+      const ok = await context.initMultimodal({
+        path: vision.mmprojPath,
+        use_gpu: gpuMode !== 'cpu',
+        image_max_tokens: vision.imageMaxTokens,
+      });
+      return { context, visionOk: ok };
+    } catch {
+      // Projector failed to load (e.g. unsupported arch) — degrade to text-only.
+      return { context, visionOk: false };
+    }
+  } catch (e) {
+    if (gpuMode === 'auto' && nGpuLayers !== 0) {
+      const context = await initLlama(
+        {
+          model: modelPath,
+          n_ctx: nCtx,
+          n_gpu_layers: 0,
+          ...(vision ? { ctx_shift: false } : {}),
+        },
+        onProgress,
+      );
+      if (!vision) return { context, visionOk: false };
+      try {
+        const ok = await context.initMultimodal({
+          path: vision.mmprojPath,
+          use_gpu: false,
+          image_max_tokens: vision.imageMaxTokens,
+        });
+        return { context, visionOk: ok };
+      } catch {
+        return { context, visionOk: false };
+      }
+    }
+    throw e;
   }
 }
 

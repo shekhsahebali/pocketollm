@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Animated, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { loadModel, modelStore, unloadModel } from '@/ai/modelManager';
+import { clearNotification, loadModel, modelStore, unloadModel } from '@/ai/modelManager';
+import { settingsStore } from '@/settings/settingsRepository';
 import { Segmented } from '@/components/segmented';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -32,10 +33,35 @@ export default function ModelsScreen() {
   useStore(downloadStore); // re-render on download progress
   const [tab, setTab] = useState<ModelsTab>('browse');
   const [query, setQuery] = useState('');
+  const toastOpacity = useRef(new Animated.Value(0)).current;
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     void reconcileModels().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (model.notification) {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      Animated.timing(toastOpacity, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+      toastTimer.current = setTimeout(() => {
+        Animated.timing(toastOpacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }).start(() => clearNotification());
+      }, 2000);
+    } else {
+      toastOpacity.setValue(0);
+    }
+    return () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+    };
+  }, [model.notification, toastOpacity]);
 
   const downloadedIds = new Set(downloaded.map((d) => d.id));
 
@@ -94,6 +120,30 @@ export default function ModelsScreen() {
 
   return (
     <ThemedView style={styles.flex}>
+      {model.notification && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.toast,
+            {
+              top: insets.top + Spacing.two,
+              backgroundColor: model.notification.type === 'success' ? theme.success : theme.accent,
+              opacity: toastOpacity,
+              transform: [
+                {
+                  translateY: toastOpacity.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-10, 0],
+                  }),
+                },
+              ],
+            },
+          ]}>
+          <ThemedText type="smallBold" style={{ color: '#fff' }}>
+            {model.notification.text}
+          </ThemedText>
+        </Animated.View>
+      )}
       <ScrollView
         contentContainerStyle={[
           styles.content,
@@ -117,7 +167,7 @@ export default function ModelsScreen() {
                 </ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
                   {model.status === 'loaded' && model.model
-                    ? 'Loaded in memory · inference is on-device'
+                    ? `Loaded in memory · ${(settingsStore.get().gpuMode ?? 'auto') === 'cpu' ? 'CPU' : 'GPU'} · inference is on-device`
                     : model.status === 'loading'
                       ? 'Preparing context — one model at a time'
                       : 'Load a downloaded model to chat'}
@@ -450,6 +500,14 @@ function ProgressBar({
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   flexShrink: { flexShrink: 1 },
+  toast: {
+    position: 'absolute',
+    alignSelf: 'center',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.four,
+    zIndex: 100,
+  },
   content: {
     paddingHorizontal: Spacing.three,
     gap: Spacing.four,

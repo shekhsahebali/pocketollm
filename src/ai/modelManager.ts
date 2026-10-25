@@ -1,6 +1,15 @@
 import type { LlamaContext } from 'llama.rn';
 
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+import { Platform } from 'react-native';
+
+let Notifications: typeof import('expo-notifications') | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  Notifications = require('expo-notifications');
+} catch {
+  Notifications = null;
+}
 
 import {
   createContext,
@@ -18,6 +27,22 @@ import { getModelMmprojPath, getModelPath, isDownloaded } from '@/models/storage
 import { settingsStore } from '@/settings/settingsRepository';
 import { LoadedModelInfo, ModelStatus } from '@/types';
 
+if (Notifications) {
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+        shouldShowBanner: true,
+        shouldShowList: true,
+      }),
+    });
+  } catch {
+    // ignore
+  }
+}
+
 export interface ModelManagerState {
   status: ModelStatus;
   model: LoadedModelInfo | null;
@@ -29,6 +54,7 @@ export interface ModelManagerState {
   vision: boolean;
   generating: boolean;
   error: string | null;
+  notification: { text: string; type: 'info' | 'success' } | null;
 }
 
 const initialState: ModelManagerState = {
@@ -39,6 +65,7 @@ const initialState: ModelManagerState = {
   vision: false,
   generating: false,
   error: null,
+  notification: null,
 };
 
 export const modelStore = createStore<ModelManagerState>(initialState);
@@ -47,7 +74,38 @@ function patch(partial: Partial<ModelManagerState>): void {
   modelStore.set({ ...modelStore.get(), ...partial });
 }
 
+export function clearNotification(): void {
+  patch({ notification: null });
+}
+
 let context: LlamaContext | null = null;
+
+async function showSystemNotification(title: string, body: string): Promise<void> {
+  if (!Notifications) return;
+  try {
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('model', {
+        name: 'Model',
+        importance: Notifications.AndroidImportance.DEFAULT,
+      });
+    }
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== 'granted') {
+      const res = await Notifications.requestPermissionsAsync();
+      if (res.status !== 'granted') return;
+    }
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title,
+        body,
+        sound: false,
+      },
+      trigger: null,
+    });
+  } catch {
+    // ignore
+  }
+}
 
 /**
  * All lifecycle operations (load / unload / generate) run through one queue
@@ -135,18 +193,22 @@ async function loadModelInner(id: string): Promise<void> {
         mmprojPath ? { mmprojPath, imageMaxTokens: settingsStore.get().imageMaxTokens } : undefined,
       );
       context = created.context;
+      const gpuMode = settingsStore.get().gpuMode ?? 'auto';
+      const backend = gpuMode === 'cpu' ? 'CPU' : 'GPU';
       patch({
         status: 'loaded',
         model: { id, name: entry.name },
         loadProgress: 100,
         loadedContextSize: nCtx,
         vision: created.visionOk,
+        notification: { text: `${entry.name} loaded (${backend})`, type: 'success' },
         // Vision models that fail projector init still chat — with a clear warning.
         error:
           entry.mmproj && !created.visionOk
             ? 'Vision could not start — image attachments are off, text chat works. Try deleting and re-downloading the model.'
             : null,
       });
+      void showSystemNotification('PocketOllm', `${entry.name} loaded (${backend})`);
     } catch (e) {
       context = null;
       patch({
@@ -163,6 +225,8 @@ async function loadModelInner(id: string): Promise<void> {
 /** Frees runtime resources. The file stays on disk. */
 export function unloadModel(): Promise<void> {
   return enqueue(async () => {
+    const current = modelStore.get();
+    const name = current.model?.name;
     if (context) {
       try {
         await release(context);
@@ -178,7 +242,9 @@ export function unloadModel(): Promise<void> {
       loadedContextSize: null,
       vision: false,
       generating: false,
+      notification: name ? { text: `${name} unloaded`, type: 'info' } : { text: 'Model unloaded', type: 'info' },
     });
+    void showSystemNotification('PocketOllm', name ? `${name} unloaded` : 'Model unloaded');
   });
 }
 

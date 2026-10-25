@@ -60,6 +60,8 @@ export type ThemeSetting = 'system' | 'light' | 'dark';
 /** Named palette from PALETTES in constants/theme.ts (keep lists in sync). */
 export type ColorPalette = 'emerald' | 'indigo' | 'ocean' | 'rose' | 'amber';
 
+export type GpuMode = 'auto' | 'gpu' | 'cpu';
+
 export interface AppSettings {
   contextSize: 1024 | 2048 | 4096;
   maxTokens: number;
@@ -77,6 +79,10 @@ export interface AppSettings {
   backgroundRunning: boolean;
   /** Server API keys (empty = auth disabled). Clients send one as `Authorization: Bearer …` or `x-api-key`. */
   apiServerKeys: string[];
+  /** GPU acceleration mode. */
+  gpuMode: GpuMode;
+  /** Number of layers to offload to GPU (-1 = all). */
+  gpuLayers: number;
 }
 
 export interface StoredModel {

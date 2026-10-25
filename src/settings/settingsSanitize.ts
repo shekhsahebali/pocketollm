@@ -14,6 +14,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   palette: 'emerald',
   backgroundRunning: true,
   apiServerKeys: [],
+  gpuMode: 'auto',
+  gpuLayers: -1,
 };
 
 const CONTEXT_SIZES = [1024, 2048, 4096];
@@ -67,6 +69,12 @@ export function sanitize(raw: unknown): AppSettings {
     out.backgroundRunning = r.backgroundRunning;
   }
   out.apiServerKeys = sanitizeApiKeys(r);
+  if (r.gpuMode === 'auto' || r.gpuMode === 'gpu' || r.gpuMode === 'cpu') {
+    out.gpuMode = r.gpuMode;
+  }
+  if (typeof r.gpuLayers === 'number' && Number.isInteger(r.gpuLayers) && r.gpuLayers >= -1 && r.gpuLayers <= 200) {
+    out.gpuLayers = r.gpuLayers;
+  }
   return out;
 }
 
