@@ -16,6 +16,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   apiServerKeys: [],
   gpuMode: 'auto',
   gpuLayers: -1,
+  fontScale: 1,
+  devMode: false,
 };
 
 const CONTEXT_SIZES = [1024, 2048, 4096];
@@ -74,6 +76,12 @@ export function sanitize(raw: unknown): AppSettings {
   }
   if (typeof r.gpuLayers === 'number' && Number.isInteger(r.gpuLayers) && r.gpuLayers >= -1 && r.gpuLayers <= 200) {
     out.gpuLayers = r.gpuLayers;
+  }
+  if (typeof r.fontScale === 'number' && r.fontScale >= 0.8 && r.fontScale <= 1.6) {
+    out.fontScale = r.fontScale;
+  }
+  if (typeof r.devMode === 'boolean') {
+    out.devMode = r.devMode;
   }
   return out;
 }

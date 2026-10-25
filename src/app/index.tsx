@@ -3,18 +3,25 @@ import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import * as Speech from 'expo-speech';
 import { router } from 'expo-router';
 import {
   AlertCircle,
+  Bot,
   Camera,
+  Copy,
   FileText,
   Image as ImageIcon,
   Menu,
+  MessageSquare,
   Pencil,
   Plus,
+  RefreshCw,
   SendHorizontal,
   Square,
   SquarePen,
+  Trash2,
+  Volume2,
   X,
 } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -26,6 +33,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Text,
   TextInput,
   View,
 } from 'react-native';
@@ -35,12 +43,15 @@ import { clearNotification, modelStore } from '@/ai/modelManager';
 import { deleteConversation, listConversations } from '@/chat/chatRepository';
 import {
   chatStore,
+  deleteMessageAndResponse,
   editUserMessage,
   initChatSession,
   newChat,
   openConversation,
+  regenerateFromMessage,
   retryLastTurn,
   sendUserMessage,
+  setChatMode,
   stopStreaming,
 } from '@/chat/chatSession';
 import { MarkdownText } from '@/components/markdown-text';
@@ -56,7 +67,7 @@ const SIDEBAR_WIDTH = 200;
 export default function ChatScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { conversation, sending, error } = useStore(chatStore);
+  const { conversation, sending, error, chatMode } = useStore(chatStore);
   const model = useStore(modelStore);
   const [draft, setDraft] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -307,6 +318,13 @@ export default function ChatScreen() {
           </View>
           <View style={styles.headerActions}>
             <Pressable
+              onPress={() => setChatMode(chatMode === 'chat' ? 'agentic' : 'chat')}
+              hitSlop={8}
+              style={({ pressed }) => [styles.headerButton, pressed && styles.pressed]}
+              accessibilityLabel="Toggle chat mode">
+              {chatMode === 'agentic' ? <Bot size={20} color={theme.accent} /> : <MessageSquare size={20} color={theme.textSecondary} />}
+            </Pressable>
+            <Pressable
               onPress={() => {
                 setEditingId(null);
                 setDraft('');
@@ -319,6 +337,16 @@ export default function ChatScreen() {
               </ThemedText>
             </Pressable>
           </View>
+        </View>
+
+        <View style={[styles.modeBar, { borderBottomColor: theme.border, backgroundColor: theme.backgroundElement }]}>
+            <ThemedText type="small" themeColor={chatMode === 'chat' ? 'accent' : 'textSecondary'}>
+              Chat
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">·</ThemedText>
+            <ThemedText type="small" themeColor={chatMode === 'agentic' ? 'accent' : 'textSecondary'}>
+              Agentic
+            </ThemedText>
         </View>
 
         {/* No-model banner with navigation to Models */}
@@ -393,10 +421,12 @@ export default function ChatScreen() {
               <Bubble
                 message={item}
                 isUser={item.role === 'user'}
-                onLongPress={() =>
-                  item.role === 'assistant' ? copyMessage(item) : startEdit(item)
-                }
+                onLongPress={() => {}}
                 onEdit={item.role === 'user' ? () => startEdit(item) : undefined}
+                onCopy={() => void Clipboard.setStringAsync(item.content)}
+                onSpeak={() => Speech.speak(item.content.replace(/```[\s\S]*?```/g, ''))}
+                onRegenerate={item.role === 'assistant' ? () => void regenerateFromMessage(item.id) : undefined}
+                onDelete={item.role === 'user' ? () => void deleteMessageAndResponse(item.id) : undefined}
               />
             )}
           />
@@ -642,73 +672,176 @@ function Bubble({
   isUser,
   onLongPress,
   onEdit,
+  onCopy,
+  onSpeak,
+  onRegenerate,
+  onDelete,
 }: {
   message: ChatMessage;
   isUser: boolean;
   onLongPress: () => void;
   /** Tap-to-edit affordance shown under user messages. */
   onEdit?: () => void;
+  onCopy?: () => void;
+  onSpeak?: () => void;
+  onRegenerate?: () => void;
+  onDelete?: () => void;
 }) {
   const theme = useTheme();
   const isError = Boolean(message.error);
+  const isTool = message.role === 'tool';
+  const isAssistant = message.role === 'assistant';
+  const [speaking, setSpeaking] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      try {
+        Speech.stop();
+      } catch {}
+    };
+  }, []);
+
+  const handleSpeak = () => {
+    if (speaking) {
+      try {
+        Speech.stop();
+      } catch {}
+      setSpeaking(false);
+      return;
+    }
+    const text = message.content.replace(/```[\s\S]*?```/g, '');
+    setSpeaking(true);
+    Speech.speak(text, {
+      onDone: () => setSpeaking(false),
+      onStopped: () => setSpeaking(false),
+      onError: () => setSpeaking(false),
+    });
+    onSpeak?.();
+  };
+
+  const handleCopy = async () => {
+    await Clipboard.setStringAsync(message.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+    onCopy?.();
+  };
+
+  const handleRegenerate = async () => {
+    setRegenerating(true);
+    await onRegenerate?.();
+    setTimeout(() => setRegenerating(false), 800);
+  };
 
   return (
-    <View
-      style={[
-        styles.bubbleRow,
-        { justifyContent: isUser ? 'flex-end' : 'flex-start' },
-      ]}>
-      <Pressable
-        onLongPress={onLongPress}
-        delayLongPress={250}
+    <View style={styles.bubbleBlock}>
+      <View
         style={[
-          styles.bubble,
-          {
-            backgroundColor: isUser ? theme.userBubble : theme.backgroundElement,
-            // Hairline border keeps assistant bubbles readable on any surface;
-            // user bubbles sit on accent color and don't need one.
-            borderColor: isError
-              ? theme.danger
-              : isUser
-                ? 'transparent'
-                : theme.border,
-          },
+          styles.bubbleRow,
+          { justifyContent: isUser ? 'flex-end' : 'flex-start' },
         ]}>
-        {message.imageUri ? (
-          // ponytail: if the picker's cache copy was cleared the thumb just
-          // disappears — text history is unaffected. Upgrade path: copy the
-          // photo into document storage when persisting the conversation.
-          <Image source={{ uri: message.imageUri }} style={styles.bubbleImage} contentFit="cover" />
-        ) : null}
-        {message.content.length === 0 && message.pending ? (
-          <ThemedText
-            type="small"
-            style={{ color: isUser ? theme.accentText : theme.textSecondary }}>
-            thinking…
-          </ThemedText>
-        ) : isUser ? (
-          <>
-            <ThemedText type="default" style={{ color: theme.userBubbleText }}>
+        <View
+          style={[
+            styles.bubble,
+            isAssistant && styles.bubbleFull,
+            isAssistant && { paddingHorizontal: 0, paddingVertical: 0, borderWidth: 0, backgroundColor: 'transparent' },
+            isUser && {
+              backgroundColor: theme.userBubble,
+              borderColor: 'transparent',
+            },
+            isTool && {
+              backgroundColor: theme.backgroundSelected,
+              borderColor: theme.border,
+              paddingHorizontal: Spacing.three,
+              paddingVertical: Spacing.two,
+            },
+            isError && {
+              borderColor: theme.danger,
+            },
+          ]}>
+          {message.imageUri ? (
+            // ponytail: if the picker's cache copy was cleared the thumb just
+            // disappears — text history is unaffected. Upgrade path: copy the
+            // photo into document storage when persisting the conversation.
+            <Image source={{ uri: message.imageUri }} style={styles.bubbleImage} contentFit="cover" />
+          ) : null}
+          {isTool && (
+            <ThemedText type="small" themeColor="textSecondary" style={{ marginBottom: 2 }}>
+              Tool: {message.toolName || 'tool'}
+            </ThemedText>
+          )}
+          {message.content.length === 0 && message.pending ? (
+            <ThemedText
+              type="small"
+              style={{ color: isUser ? theme.accentText : theme.textSecondary }}>
+              thinking…
+            </ThemedText>
+          ) : isUser ? (
+            <Text
+              selectable
+              selectionColor={theme.accent}
+              style={{ color: theme.userBubbleText, fontSize: 16, lineHeight: 22 }}>
               {message.content}
               {message.pending ? ' ▍' : ''}
-            </ThemedText>
-            {onEdit ? (
-              <Pressable
-                onPress={onEdit}
-                hitSlop={8}
-                style={styles.editPen}
-                accessibilityLabel="Edit message">
-                <Pencil size={13} color={theme.accentText}  />
-              </Pressable>
-            ) : null}
-          </>
-        ) : (
-          <MarkdownText
-            text={message.content + (message.pending ? ' ▍' : '')}
-            color={isError ? theme.danger : theme.text}
-          />
-        )}
-      </Pressable>
+            </Text>
+          ) : (
+            <View style={{ width: '100%' }}>
+              <MarkdownText
+                text={message.content + (message.pending ? ' ▍' : '')}
+                color={isError ? theme.danger : theme.text}
+              />
+            </View>
+          )}
+          {message.toolCalls && message.toolCalls.length > 0 && (
+            <View style={{ marginTop: 4, gap: 2 }}>
+              {message.toolCalls.map((tc) => (
+                <ThemedText key={tc.id} type="small" themeColor="textSecondary">
+                  → {tc.name}({tc.arguments.slice(0, 80)}{tc.arguments.length > 80 ? '...' : ''})
+                </ThemedText>
+              ))}
+            </View>
+          )}
+        </View>
+      </View>
+      {(isAssistant && !message.pending) || isTool ? (
+        <View style={[styles.actionRow, isAssistant && { paddingHorizontal: 0 }]}>
+          {onCopy && (
+            <Pressable onPress={handleCopy} hitSlop={6} style={styles.actionBtn}>
+              <Copy size={14} color={copied ? theme.accent : theme.textSecondary} />
+            </Pressable>
+          )}
+          {onSpeak && (
+            <Pressable onPress={handleSpeak} hitSlop={6} style={styles.actionBtn}>
+              <Volume2 size={14} color={speaking ? theme.accent : theme.textSecondary} />
+            </Pressable>
+          )}
+          {onRegenerate && (
+            <Pressable onPress={handleRegenerate} hitSlop={6} style={styles.actionBtn}>
+              <RefreshCw size={14} color={regenerating ? theme.accent : theme.textSecondary} />
+            </Pressable>
+          )}
+        </View>
+      ) : null}
+      {isUser && !message.pending && (
+        <View style={[styles.actionRow, { alignSelf: 'flex-end', alignItems: 'center' }]}>
+          {onEdit && (
+            <Pressable onPress={onEdit} hitSlop={6} style={styles.actionBtn}>
+              <Pencil size={14} color={theme.textSecondary} />
+            </Pressable>
+          )}
+          {onCopy && (
+            <Pressable onPress={handleCopy} hitSlop={6} style={styles.actionBtn}>
+              <Copy size={14} color={copied ? theme.accent : theme.textSecondary} />
+            </Pressable>
+          )}
+          {onDelete && (
+            <Pressable onPress={onDelete} hitSlop={6} style={styles.actionBtn}>
+              <Trash2 size={14} color={theme.textSecondary} />
+            </Pressable>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -742,8 +875,16 @@ const styles = StyleSheet.create({
   statusText: { flexShrink: 1 },
   headerActions: {
     flexDirection: 'row',
-    gap: Spacing.three,
+    gap: Spacing.two,
     marginLeft: 'auto',
+  },
+  modeBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.one,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   headerButton: { paddingVertical: Spacing.one, paddingHorizontal: Spacing.one },
   pressed: { opacity: 0.6 },
@@ -776,9 +917,12 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     gap: Spacing.two,
   },
+  bubbleBlock: {
+    gap: 2,
+    marginBottom: Spacing.one,
+  },
   bubbleRow: {
     flexDirection: 'row',
-    marginBottom: Spacing.one,
   },
   bubble: {
     maxWidth: '85%',
@@ -786,6 +930,19 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     borderRadius: Spacing.four,
     borderWidth: 1,
+  },
+  bubbleFull: {
+    maxWidth: '100%',
+    alignSelf: 'stretch',
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.one,
+  },
+  actionBtn: {
+    padding: 4,
   },
   hamburger: { fontSize: 20, lineHeight: 22 },
   composerColumn: {

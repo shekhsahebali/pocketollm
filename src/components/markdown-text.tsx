@@ -61,13 +61,13 @@ function renderBlocks(
     switch (b.type) {
       case 'paragraph':
         return (
-          <Text key={key} style={st.p}>
+          <Text key={key} style={st.p} selectable>
             {renderInlines(b.inlines, st, key)}
           </Text>
         );
       case 'heading':
         return (
-          <Text key={key} style={[st.p, st.heading]}>
+          <Text key={key} style={[st.p, st.heading]} selectable>
             {renderInlines(b.inlines, st, key)}
           </Text>
         );
@@ -100,7 +100,7 @@ function renderBlocks(
         return <View key={key} style={st.hr} />;
       case 'text':
         return (
-          <Text key={key} style={st.p}>
+          <Text key={key} style={st.codeText} selectable>
             {b.text}
           </Text>
         );
@@ -116,19 +116,19 @@ function renderInlines(inlines: Inline[], st: ReturnType<typeof makeStyles>, key
         return n.text;
       case 'strong':
         return (
-          <Text key={key} style={st.strong}>
+          <Text key={key} style={st.strong} selectable>
             {renderInlines(n.children, st, key)}
           </Text>
         );
       case 'em':
         return (
-          <Text key={key} style={st.em}>
+          <Text key={key} style={st.em} selectable>
             {renderInlines(n.children, st, key)}
           </Text>
         );
       case 'code':
         return (
-          <Text key={key} style={st.codespan}>
+          <Text key={key} style={st.codespan} selectable>
             {n.text}
           </Text>
         );

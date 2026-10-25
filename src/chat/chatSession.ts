@@ -10,7 +10,7 @@ import {
 } from '@/chat/chatRepository';
 import { createStore } from '@/hooks/use-store';
 import { settingsStore } from '@/settings/settingsRepository';
-import { Attachment, ChatMessage, Conversation } from '@/types';
+import { Attachment, ChatMessage, ChatMode, Conversation } from '@/types';
 import { File } from 'expo-file-system';
 
 import { applyUserEdit } from './editRule';
@@ -20,6 +20,7 @@ export interface ChatState {
   sending: boolean;
   error: string | null;
   initialized: boolean;
+  chatMode: ChatMode;
 }
 
 const initialState: ChatState = {
@@ -27,12 +28,17 @@ const initialState: ChatState = {
   sending: false,
   error: null,
   initialized: false,
+  chatMode: 'chat',
 };
 
 export const chatStore = createStore<ChatState>(initialState);
 
 function patch(partial: Partial<ChatState>): void {
   chatStore.set({ ...chatStore.get(), ...partial });
+}
+
+export function setChatMode(mode: ChatMode): void {
+  patch({ chatMode: mode });
 }
 
 async function persist(conv: Conversation): Promise<void> {
@@ -85,8 +91,9 @@ export async function clearAllChats(): Promise<void> {
 /** Builds the llama.rn message array: system prompt + bounded recent history. */
 function buildLlmMessages(conv: Conversation): LlmMessage[] {
   const { systemPrompt } = settingsStore.get();
+  const chatMode = chatStore.get().chatMode;
   const history = conv.messages.filter(
-    (m) => (m.role === 'user' || m.role === 'assistant') && !m.pending && !m.error,
+    (m) => (m.role === 'user' || m.role === 'assistant' || m.role === 'tool') && !m.pending && !m.error,
   );
   // Keep the prompt well inside the context window (ceiling: 24 messages).
   const recent = history.slice(-24);
@@ -110,18 +117,26 @@ function buildLlmMessages(conv: Conversation): LlmMessage[] {
   }
 
   const messages: LlmMessage[] = recent.map((m, i) => {
-    if (i === imageIndex && m.imageUri) {
+    if (i === imageIndex && m.imageUri && m.role === 'user') {
       return {
         role: m.role,
         content: [
           { type: 'text', text: m.content },
           { type: 'image_url', image_url: { url: m.imageUri } },
         ],
-      };
+      } as LlmMessage;
     }
-    return { role: m.role, content: m.content };
+    if (m.role === 'tool') {
+      return { role: 'tool' as any, content: m.content, tool_call_id: m.toolCallId } as LlmMessage;
+    }
+    return { role: m.role as any, content: m.content } as LlmMessage;
   });
-  return [{ role: 'system', content: systemPrompt }, ...messages];
+
+  const system =
+    chatMode === 'agentic'
+      ? `${systemPrompt}\n\nYou have access to tools. When needed, call tools using function calling format. Available tools: calculator (expression), get_time (timezone), web_search (query).`
+      : systemPrompt;
+  return [{ role: 'system', content: system }, ...messages];
 }
 
 /**
@@ -246,17 +261,97 @@ async function runTurn(conv: Conversation, assistantMsgId: string): Promise<void
   };
 
   try {
+    const chatMode = chatStore.get().chatMode;
     const llmMessages = buildLlmMessages(conv);
     const { maxTokens, temperature, topP, topK, repeatPenalty } = settingsStore.get();
+    let acc = '';
     const outcome = await runCompletion(
       llmMessages,
       { nPredict: maxTokens, temperature, topP, topK, repeatPenalty },
-      (partial) => replaceAssistant(partial),
+      (partial) => {
+        acc = partial;
+        replaceAssistant(partial);
+      },
     );
 
+    let finalText = outcome.text || acc || '(no response)';
     const current = chatStore.get().conversation;
+
+    if (chatMode === 'agentic' && current) {
+      try {
+        const jsonMatch = finalText.match(/```json\s*([\s\S]*?)```/) || finalText.match(/\{[\s\S]*"tool_calls"[\s\S]*\}/);
+        if (jsonMatch) {
+          const raw = jsonMatch[1] || jsonMatch[0];
+          const parsed = JSON.parse(raw);
+          const toolCalls = parsed.tool_calls || parsed.tools || [];
+          if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+            const calls = toolCalls
+              .map((tc: any, idx: number) => ({
+                id: `call_${Date.now()}_${idx}`,
+                name: tc.name || tc.function?.name || '',
+                arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments || tc.function?.arguments || {}),
+              }))
+              .filter((c: any) => c.name);
+            if (calls.length > 0) {
+              replaceAssistant(finalText, { toolCalls: calls, pending: false });
+              await persist(chatStore.get().conversation!);
+              const toolResults: ChatMessage[] = [];
+              for (const call of calls) {
+                let result = '';
+                try {
+                  if (call.name === 'calculator') {
+                    const args = JSON.parse(call.arguments || '{}');
+                    const expr = String(args.expression || args.expr || '');
+                    const safe = expr.replace(/[^0-9+\-*/().\s]/g, '');
+                    // eslint-disable-next-line no-eval
+                    result = String(eval(safe || '0'));
+                  } else if (call.name === 'get_time') {
+                    const args = JSON.parse(call.arguments || '{}');
+                    const tz = args.timezone || args.tz || 'UTC';
+                    result = new Date().toLocaleString('en-US', { timeZone: tz });
+                  } else if (call.name === 'web_search') {
+                    const args = JSON.parse(call.arguments || '{}');
+                    result = `Web search results for: ${args.query || ''} (search disabled in offline mode)`;
+                  } else {
+                    result = `Unknown tool: ${call.name}`;
+                  }
+                } catch (err) {
+                  result = `Tool error: ${err instanceof Error ? err.message : String(err)}`;
+                }
+                toolResults.push({
+                  id: `${conv.id}-t${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                  role: 'tool',
+                  content: result,
+                  createdAt: Date.now(),
+                  toolCallId: call.id,
+                  toolName: call.name,
+                });
+              }
+              const c2 = chatStore.get().conversation!;
+              const convWithTools: Conversation = { ...c2, messages: [...c2.messages, ...toolResults], updatedAt: Date.now() };
+              patch({ conversation: convWithTools });
+              await persist(convWithTools);
+              const nextAssistant: ChatMessage = {
+                id: `${conv.id}-a${Date.now() + 1}`,
+                role: 'assistant',
+                content: '',
+                createdAt: Date.now(),
+                pending: true,
+              };
+              const convFinal: Conversation = { ...convWithTools, messages: [...convWithTools.messages, nextAssistant] };
+              patch({ conversation: convFinal });
+              await runTurn(convFinal, nextAssistant.id);
+              return;
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     if (current) {
-      replaceAssistant(outcome.text || '(no response)', { pending: false });
+      replaceAssistant(finalText, { pending: false, toolCalls: undefined });
       await persist(chatStore.get().conversation!);
     }
     patch({ sending: false });
@@ -269,6 +364,52 @@ async function runTurn(conv: Conversation, assistantMsgId: string): Promise<void
     patch({ sending: false, error: message });
     await persist(chatStore.get().conversation!);
   }
+}
+
+export async function regenerateFromMessage(messageId: string): Promise<void> {
+  const { sending, conversation } = chatStore.get();
+  if (sending || !conversation) return;
+  const idx = conversation.messages.findIndex((m) => m.id === messageId);
+  if (idx < 0) return;
+  let cut = idx;
+  if (conversation.messages[idx].role === 'assistant') {
+    while (cut > 0 && conversation.messages[cut - 1].role === 'assistant') cut--;
+    if (cut > 0 && conversation.messages[cut - 1].role === 'tool') {
+      cut--;
+      while (cut > 0 && conversation.messages[cut - 1].role === 'tool') cut--;
+    }
+  }
+  const messages = conversation.messages.slice(0, cut);
+  if (!messages.length) return;
+  patch({ sending: true, error: null });
+  const assistantMsg: ChatMessage = {
+    id: `${conversation.id}-a${Date.now()}`,
+    role: 'assistant',
+    content: '',
+    createdAt: Date.now(),
+    pending: true,
+  };
+  const next: Conversation = { ...conversation, messages: [...messages, assistantMsg], updatedAt: Date.now() };
+  patch({ conversation: next });
+  void persist(next);
+  await runTurn(next, assistantMsg.id);
+}
+
+export async function deleteMessageAndResponse(messageId: string): Promise<void> {
+  const { sending, conversation } = chatStore.get();
+  if (sending || !conversation) return;
+  const idx = conversation.messages.findIndex((m) => m.id === messageId);
+  if (idx < 0) return;
+  let end = idx + 1;
+  if (conversation.messages[idx].role === 'user') {
+    while (end < conversation.messages.length && (conversation.messages[end].role === 'assistant' || conversation.messages[end].role === 'tool')) end++;
+  } else if (conversation.messages[idx].role === 'assistant') {
+    while (end < conversation.messages.length && (conversation.messages[end].role === 'assistant' || conversation.messages[end].role === 'tool')) end++;
+  }
+  const messages = conversation.messages.slice(0, idx).concat(conversation.messages.slice(end));
+  const next: Conversation = { ...conversation, messages, updatedAt: Date.now() };
+  patch({ conversation: next, error: null });
+  void persist(next);
 }
 
 export function stopStreaming(): void {

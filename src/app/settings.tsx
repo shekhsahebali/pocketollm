@@ -276,6 +276,69 @@ export default function SettingsScreen() {
             labelFor={(v) => v.charAt(0).toUpperCase() + v.slice(1)}
             accessibilityLabel="Color theme"
           />
+          <ThemedView type="backgroundElement" style={styles.card}>
+            <View style={styles.specRow}>
+              <ThemedText type="smallBold" style={styles.flex}>
+                Font size
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {settings.fontScale.toFixed(1)}x
+              </ThemedText>
+            </View>
+            <View style={styles.stepperRow}>
+              <Pressable
+                onPress={() => updateSettings({ fontScale: Math.max(0.8, Number((settings.fontScale - 0.1).toFixed(1))) })}
+                style={({ pressed }) => [styles.stepperButton, { backgroundColor: theme.backgroundSelected }, pressed && styles.pressed]}>
+                <ThemedText type="small">-</ThemedText>
+              </Pressable>
+              <View style={{ flex: 1, height: 40, justifyContent: 'center' }}>
+                <View
+                  style={{
+                    height: 4,
+                    backgroundColor: theme.backgroundSelected,
+                    borderRadius: 2,
+                  }}>
+                  <View
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      height: 4,
+                      width: `${((settings.fontScale - 0.8) / 0.8) * 100}%`,
+                      backgroundColor: theme.accent,
+                      borderRadius: 2,
+                    }}
+                  />
+                </View>
+              </View>
+              <Pressable
+                onPress={() => updateSettings({ fontScale: Math.min(1.6, Number((settings.fontScale + 0.1).toFixed(1))) })}
+                style={({ pressed }) => [styles.stepperButton, { backgroundColor: theme.backgroundSelected }, pressed && styles.pressed]}>
+                <ThemedText type="small">+</ThemedText>
+              </Pressable>
+            </View>
+            <ThemedText type="small" themeColor="textSecondary">
+              Smaller — Larger
+            </ThemedText>
+          </ThemedView>
+        </Section>
+
+        <Section title="Developer">
+          <ThemedView type="backgroundElement" style={styles.card}>
+            <View style={styles.specRow}>
+              <View style={styles.flex}>
+                <ThemedText type="smallBold">Developer mode</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Show Server tab and developer features.
+                </ThemedText>
+              </View>
+              <Switch
+                value={settings.devMode}
+                onValueChange={(v) => { updateSettings({ devMode: v }); }}
+                trackColor={{ false: theme.border, true: theme.accent }}
+                thumbColor={theme.backgroundElement}
+              />
+            </View>
+          </ThemedView>
         </Section>
 
         {/* Inference */}

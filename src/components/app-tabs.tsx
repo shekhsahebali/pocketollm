@@ -1,11 +1,14 @@
 import { NativeTabs } from 'expo-router/native-tabs';
 
 import { useTheme } from '@/hooks/use-theme';
+import { useStore } from '@/hooks/use-store';
+import { settingsStore } from '@/settings/settingsRepository';
 
 export default function AppTabs() {
   // useTheme resolves mode (system/light/dark) AND palette, so the native
   // tab bar matches the rest of the UI for every theme combination.
   const colors = useTheme();
+  const settings = useStore(settingsStore);
 
   return (
     <NativeTabs
@@ -24,10 +27,12 @@ export default function AppTabs() {
         <NativeTabs.Trigger.Label>Models</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="arrow.down.circle.fill" md="download" />
       </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="server">
-        <NativeTabs.Trigger.Label>Server</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="network" md="lan" />
-      </NativeTabs.Trigger>
+      {settings.devMode && (
+        <NativeTabs.Trigger name="server">
+          <NativeTabs.Trigger.Label>Server</NativeTabs.Trigger.Label>
+          <NativeTabs.Trigger.Icon sf="network" md="lan" />
+        </NativeTabs.Trigger>
+      )}
       <NativeTabs.Trigger name="settings">
         <NativeTabs.Trigger.Label>Settings</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf="gearshape.fill" md="settings" />

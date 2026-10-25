@@ -1,4 +1,12 @@
-export type ChatRole = 'system' | 'user' | 'assistant';
+export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
+
+export type ChatMode = 'chat' | 'agentic';
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
 
 export interface ChatMessage {
   id: string;
@@ -11,6 +19,9 @@ export interface ChatMessage {
   error?: string;
   /** Local URI of an attached photo (vision models). */
   imageUri?: string;
+  toolCalls?: ToolCall[];
+  toolCallId?: string;
+  toolName?: string;
 }
 
 export interface Conversation {
@@ -83,6 +94,10 @@ export interface AppSettings {
   gpuMode: GpuMode;
   /** Number of layers to offload to GPU (-1 = all). */
   gpuLayers: number;
+  /** App font scale (1 = default). */
+  fontScale: number;
+  /** Enable developer/server mode. */
+  devMode: boolean;
 }
 
 export interface StoredModel {

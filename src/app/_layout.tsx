@@ -1,7 +1,8 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { useColorScheme } from 'react-native';
+import { PixelRatio, Text, useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
@@ -31,15 +32,22 @@ function initApp(): void {
 
 export default function TabLayout() {
   const systemScheme = useColorScheme();
-  const themePreference = useStore(settingsStore).theme;
+  const settings = useStore(settingsStore);
+  const themePreference = settings.theme;
   const scheme = themePreference === 'system' ? systemScheme : themePreference;
+  const fontScale = settings.fontScale ?? 1;
 
   useEffect(() => {
     initApp();
   }, []);
 
+  useEffect(() => {
+    PixelRatio.getFontScale = () => fontScale;
+  }, [fontScale]);
+
   return (
     <ThemeProvider value={scheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       <AnimatedSplashOverlay />
       <AppTabs />
     </ThemeProvider>
